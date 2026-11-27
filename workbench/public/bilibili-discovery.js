@@ -60,13 +60,14 @@
     const added = new Map((Array.isArray(data?.added) ? data.added : [])
       .filter(item => videoId.test(item?.id)).map(item => [item.id, item]));
     const later = new Set(Array.isArray(data?.later) ? data.later : []);
+    const liked = new Set(Array.isArray(data?.liked) ? data.liked : []);
     let snapshot;
     try { snapshot = cleanSnapshot(JSON.parse(storage.getItem(snapshotKey) || '{}')); }
     catch { snapshot = {history: [], favorites: []}; }
     const imported = () => [...snapshot.favorites, ...snapshot.history];
     const catalog = () => [...new Map([...imported(), ...featured, ...added.values()].map(item => [item.id, {...item,cover:coverUrl(item.cover)||featured.find(seed=>seed.id===item.id)?.cover||''}])).values()];
     function save() {
-      storage.setItem(key, JSON.stringify({added: [...added.values()], later: [...later]}));
+      storage.setItem(key, JSON.stringify({added: [...added.values()], later: [...later], liked: [...liked]}));
     }
     function remember(video, fields = {}) {
       const id = video?.id;
@@ -120,6 +121,13 @@
         return catalog().filter(item => [item.title, item.author, item.topic, item.id]
           .some(field => String(field || '').normalize('NFKC').toLowerCase().includes(query)));
       },
+      hasLike: id => liked.has(id),
+      toggleLike(video) {
+        if (liked.has(video.id)) liked.delete(video.id);
+        else { remember(video); liked.add(video.id); }
+        save();
+      },
+      liked: () => [...liked].reverse(),
       hasLater: id => later.has(id),
       toggleLater(video) {
         if (later.has(video.id)) later.delete(video.id);

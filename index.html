@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<link rel="icon" href="data:,">
+<title>GlassTube · HackerTube for Glasses</title>
+<!--
+  GlassTube — HackerTube (Karpathy, 2026-10-31) 思路的眼镜端重建版
+  目标视口：600 × 800（显示眼镜 / 模拟器），同样适配手机触屏。
+  交互模型（参考 Meta Ray-Ban Display Web Apps 与 Android XR Glimmer）：
+    · 方向键（Neural Band 滑动 / 触控板）移动焦点，Enter（捏合）激活
+    · 长按 Enter（捏合保持）或 M 键 打开上下文菜单
+    · Escape / Backspace / 系统返回（history）逐层返回
+    · B 键：切换“透视叠加”模拟（mix-blend-mode: screen 模拟加色光学）
+-->
+<style>
+  :root{
+    --bg:#000;                     /* 加色显示：纯黑 = 透明 */
+    --panel:rgba(30,32,38,.92);
+    --panel-hi:rgba(48,52,62,.96);
+    --line:rgba(255,255,255,.07);
+    --txt:#e6e6e6;                 /* 不使用纯白，降低漏光与眩光 */
+    --sub:#a0a6ad;
+    --dim:#6f757c;
+    --acc:#8ab4f8;
+    --acc-soft:rgba(138,180,248,.18);
+    --r-lg:28px; --r-md:20px; --r-sm:14px;
+    --pad:24px;
+    --ease:cubic-bezier(.2,.8,.2,1);
+    --dur:180ms;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font-family:"Google Sans","Product Sans",Roboto,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;overflow:hidden;-webkit-tap-highlight-color:transparent}
+  button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer}
+  .f{outline:none}
+  svg{display:block}
+
+  /* ---------- 视口 ---------- */
+  #app{position:relative;width:min(100vw,600px);height:min(100dvh,800px);margin:0 auto;overflow:hidden;isolation:isolate}
+  @media (min-width:680px) and (min-height:860px){
+    body{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;background:#0b0c0e}
+    #app{margin:0;border-radius:6px;box-shadow:0 0 0 1px #2a2d33,0 30px 80px rgba(0,0,0,.6);background:#000}
+    #frameLabel{display:block}
+  }
+  #frameLabel{display:none;color:#5f656c;font-size:13px;letter-spacing:.04em}
+  #frameLabel b{color:#8a9097;font-weight:500}
+
+  /* 透视叠加模拟：背景为“真实世界”，UI 以 screen 混合（黑=透明，亮=发光） */
+  #world{position:absolute;inset:0;z-index:0;opacity:0;transition:opacity .4s;
+    background:
+      radial-gradient(120% 60% at 50% 110%, #3d4a2f 0 40%, transparent 41%),
+      radial-gradient(40% 30% at 20% 30%, #f3e6c8 0, transparent 70%),
+      linear-gradient(180deg,#9cc3e6 0%,#d7e6f0 45%,#7c8a6a 46%,#55603f 100%)}
+  #app.pt #world{opacity:1}
+  #app.pt #ui{mix-blend-mode:screen}
+  #ui{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;background:#000}
+
+  /* ---------- 顶栏 ---------- */
+  #top{flex:none;padding:18px var(--pad) 6px;transition:opacity var(--dur),transform var(--dur) var(--ease)}
+  .tabs{display:flex;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:5px}
+  .tab{flex:1;height:46px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+    font-size:18px;color:var(--sub);transition:background var(--dur),color var(--dur),box-shadow var(--dur),transform var(--dur) var(--ease)}
+  .tab.on{color:var(--txt);background:rgba(255,255,255,.08)}
+  .tab:focus{color:#0d1420;background:var(--acc);box-shadow:0 0 22px rgba(138,180,248,.45)}
+  .titlebar{display:flex;align-items:center;gap:12px;height:56px;padding:0 6px}
+  .titlebar .crumb{font-size:16px;color:var(--sub)}
+  .titlebar h2{margin:0;font-size:22px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* ---------- 内容区 ---------- */
+  #view{flex:1;position:relative;min-height:0}
+  .vs{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;padding:6px 0 28px;
+    --ft:0px;--fb:0px;
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--ft),#000 calc(100% - var(--fb)),transparent 100%);
+            mask-image:linear-gradient(to bottom,transparent 0,#000 var(--ft),#000 calc(100% - var(--fb)),transparent 100%)}
+  .vs::-webkit-scrollbar,.track::-webkit-scrollbar{display:none}
+  .vs.ft{--ft:28px}.vs.fb{--fb:44px}
+  .screen-in{animation:screenIn 220ms var(--ease)}
+  @keyframes screenIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+  /* ---------- 货架（横向轮播） ---------- */
+  .shelf{margin:4px 0 6px}
+  .shelf h3{margin:10px var(--pad) 0;font-size:17px;font-weight:500;color:var(--sub);display:flex;gap:8px;align-items:baseline}
+  .shelf h3 span{font-size:15px;color:var(--dim)}
+  .track{position:relative;display:flex;gap:16px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;padding:12px var(--pad) 10px;
+    --fl:0px;--fr:0px;
+    -webkit-mask-image:linear-gradient(to right,transparent 0,#000 var(--fl),#000 calc(100% - var(--fr)),transparent 100%);
+            mask-image:linear-gradient(to right,transparent 0,#000 var(--fl),#000 calc(100% - var(--fr)),transparent 100%)}
+  .track.fl{--fl:18px}.track.fr{--fr:40px}
+  .empty{margin:12px var(--pad) 6px;padding:18px 20px;border-radius:var(--r-md);border:1px dashed rgba(255,255,255,.1);color:var(--dim);font-size:16px}
+
+  /* ---------- 视频卡 ---------- */
+  .card{flex:none;width:236px;position:relative}
+  .thumb{position:relative;width:100%;aspect-ratio:16/9;border-radius:var(--r-md);overflow:hidden;
+    background:linear-gradient(135deg,hsl(var(--h) 45% 26%),hsl(calc(var(--h) + 40) 40% 12%));
+    transition:transform var(--dur) var(--ease),box-shadow var(--dur),filter var(--dur);filter:brightness(.62) saturate(.85)}
+  .thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .thumb .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:600;color:rgba(255,255,255,.35);letter-spacing:.04em}
+  .card .ct{margin-top:10px;font-size:18px;line-height:1.3;max-height:2.6em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:var(--sub);transition:color var(--dur)}
+  .card .cm{margin-top:4px;font-size:16px;color:var(--dim)}
+  .card:focus .thumb,.row:focus .thumb,.hero:focus .thumb{filter:none;transform:scale(1.04);
+    box-shadow:0 0 0 3px var(--acc),0 0 28px rgba(138,180,248,.5)}
+  .card:focus .ct{color:var(--txt)}
+  /* 长按进度 */
+  .thumb::after{content:"";position:absolute;left:0;bottom:0;height:5px;width:0;background:var(--acc);border-radius:0 3px 3px 0}
+  .pressing .thumb::after{width:100%;transition:width 550ms linear}
+  .pressing .thumb{transform:scale(.98)}
+  .badge{position:absolute;top:8px;right:8px;display:flex;gap:4px}
+  .badge i{display:flex;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.6);align-items:center;justify-content:center}
+  .badge svg{width:15px;height:15px;fill:var(--acc)}
+  .watched{position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.25)}
+  .watched::before{content:"";position:absolute;inset:0;width:var(--p,100%);background:#e8806a}
+
+  /* ---------- 列表行 ---------- */
+  .list{padding:4px var(--pad) 0;display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;gap:16px;align-items:center;padding:10px;border-radius:var(--r-lg);transition:background var(--dur),box-shadow var(--dur)}
+  .row .thumb{width:196px;flex:none;border-radius:var(--r-sm)}
+  .row .rt{min-width:0;flex:1}
+  .row .t{font-size:19px;line-height:1.3;max-height:2.6em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:var(--sub)}
+  .row .m{margin-top:6px;font-size:16px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .why{display:inline-block;margin-top:8px;font-size:15px;color:var(--acc);background:var(--acc-soft);padding:3px 10px;border-radius:999px}
+  .row:focus{background:var(--panel-hi);box-shadow:0 0 0 1px var(--line)}
+  .row:focus .t{color:var(--txt)}
+  .row:focus .thumb{transform:none;box-shadow:0 0 0 3px var(--acc)}
+
+  /* ---------- Hero ---------- */
+  .hero{display:block;margin:6px var(--pad) 10px;width:calc(100% - 2*var(--pad));position:relative}
+  .hero .thumb{border-radius:var(--r-lg)}
+  .hero .ov{position:absolute;left:0;right:0;bottom:0;padding:48px 22px 18px;border-radius:0 0 var(--r-lg) var(--r-lg);
+    background:linear-gradient(to top,rgba(0,0,0,.92),rgba(0,0,0,0))}
+  .hero .ov .why{font-size:15px;color:var(--acc)}
+  .hero .ov .t{margin-top:6px;font-size:23px;line-height:1.25;font-weight:500}
+  .hero .ov .m{margin-top:4px;font-size:16px;color:var(--sub)}
+  .hero:focus .thumb{transform:scale(1.02)}
+  .section-h{margin:16px var(--pad) 2px;font-size:17px;font-weight:500;color:var(--sub)}
+
+  /* ---------- 话题瓷砖 ---------- */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:10px var(--pad)}
+  .tile{height:132px;border-radius:var(--r-lg);padding:18px;display:flex;flex-direction:column;justify-content:space-between;
+    background:linear-gradient(140deg,hsl(var(--h) 40% 20% / .95),hsl(calc(var(--h) + 30) 30% 10% / .95));border:1px solid var(--line);
+    transition:transform var(--dur) var(--ease),box-shadow var(--dur);filter:brightness(.8)}
+  .tile .g{font-size:30px;line-height:1}
+  .tile .n{font-size:20px;font-weight:500}
+  .tile .c{font-size:15px;color:var(--sub)}
+  .tile:focus{filter:none;transform:scale(1.03);box-shadow:0 0 0 3px var(--acc),0 0 26px rgba(138,180,248,.4)}
+
+  /* ---------- 胶囊按钮 ---------- */
+  .chips{display:flex;flex-wrap:wrap;gap:10px;padding:8px var(--pad)}
+  .chip{height:44px;padding:0 18px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:17px;color:var(--sub);display:flex;align-items:center;gap:8px;transition:all var(--dur)}
+  .chip:focus{background:var(--acc);color:#0d1420;box-shadow:0 0 22px rgba(138,180,248,.45)}
+  .chip.danger:focus{background:#f28b82}
+
+  /* ---------- 搜索 ---------- */
+  .sbox{margin:8px var(--pad) 4px;position:relative}
+  .sbox input{width:100%;height:58px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--txt);
+    font:inherit;font-size:19px;padding:0 22px 0 54px;transition:box-shadow var(--dur),background var(--dur)}
+  .sbox input::placeholder{color:var(--dim)}
+  .sbox input:focus{box-shadow:0 0 0 3px var(--acc);background:var(--panel-hi)}
+  .sbox svg{position:absolute;left:20px;top:17px;width:24px;height:24px;fill:var(--sub)}
+
+  /* ---------- 播放页 ---------- */
+  .player{position:relative;margin:4px 12px 0;border-radius:var(--r-lg);overflow:hidden;aspect-ratio:16/9;background:#050506}
+  .player iframe,#yt{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none}
+  .pfb{position:absolute;inset:0;z-index:2;transition:opacity .3s}
+  .pfb .thumb{position:absolute;inset:0;border-radius:0;aspect-ratio:auto;height:100%;filter:brightness(.45)}
+  .pmsg{position:absolute;left:20px;right:20px;bottom:18px;font-size:16px;color:var(--sub);line-height:1.4}
+  .pfb.hide{opacity:0;pointer-events:none}
+  .prog{display:flex;align-items:center;gap:12px;margin:12px var(--pad) 0}
+  .bar{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--acc);border-radius:3px;transition:width .5s linear}
+  #ptime{font-size:15px;color:var(--sub);font-variant-numeric:tabular-nums;min-width:110px;text-align:right}
+  .winfo{margin:12px var(--pad) 0}
+  .winfo h1{margin:0;font-size:22px;line-height:1.3;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .winfo p{margin:6px 0 0;font-size:16px;color:var(--sub)}
+  .rail{display:flex;justify-content:space-between;margin:14px var(--pad) 0;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg)}
+  .rb{width:88px;display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0;border-radius:var(--r-md);transition:background var(--dur)}
+  .rb .ic{width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);transition:all var(--dur) var(--ease)}
+  .rb svg{width:26px;height:26px;fill:var(--sub)}
+  .rb span{font-size:15px;color:var(--dim)}
+  .rb.on svg{fill:var(--acc)}
+  .rb:focus .ic{background:var(--acc);transform:scale(1.08);box-shadow:0 0 24px rgba(138,180,248,.5)}
+  .rb:focus svg{fill:#0d1420}
+  .rb:focus span{color:var(--txt)}
+  .blurb{margin:14px var(--pad) 0;font-size:17px;line-height:1.5;color:var(--sub)}
+  .watching .shelf .card{width:200px}
+  .watching .shelf .card .ct{font-size:17px}
+
+  /* 沉浸模式：播放中无操作自动隐藏控件 */
+  #app.immersive #hints,#app.immersive .prog,#app.immersive .winfo,#app.immersive .rail,#app.immersive .blurb,#app.immersive .shelf{opacity:0;transition:opacity .6s}
+  #app.immersive .vs{-webkit-mask-image:none;mask-image:none}
+  .prog,.winfo,.rail,.blurb,.shelf{transition:opacity .25s}
+
+  /* ---------- 底部操作提示（ActionHint） ---------- */
+  #hints{flex:none;height:50px;display:flex;align-items:center;gap:14px;padding:0 var(--pad) 6px;font-size:15px;color:var(--dim);transition:opacity var(--dur)}
+  #hints .h{display:flex;align-items:center;gap:6px;white-space:nowrap}
+  #hints kbd{font:inherit;font-size:13px;min-width:24px;height:24px;padding:0 6px;border-radius:7px;border:1px solid rgba(255,255,255,.14);display:inline-flex;align-items:center;justify-content:center;color:var(--sub)}
+  #clock{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--sub)}
+
+  /* ---------- 上下文菜单（VerticalMenu） ---------- */
+  #scrim{position:absolute;inset:0;z-index:5;background:rgba(0,0,0,.72);opacity:0;pointer-events:none;transition:opacity var(--dur)}
+  #menu{position:absolute;left:var(--pad);right:var(--pad);bottom:66px;z-index:6;background:var(--panel-hi);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px;
+    transform:translateY(20px);opacity:0;pointer-events:none;transition:transform var(--dur) var(--ease),opacity var(--dur)}
+  #app.menu #scrim{opacity:1;pointer-events:auto}
+  #app.menu #menu{transform:none;opacity:1;pointer-events:auto}
+  #menu .mh{display:flex;gap:14px;align-items:center;padding:4px 6px 12px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  #menu .mh .thumb{width:120px;flex:none;border-radius:12px;filter:none}
+  #menu .mh .t{font-size:17px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .mi{display:flex;align-items:center;gap:14px;width:100%;height:58px;padding:0 16px;border-radius:var(--r-md);font-size:19px;color:var(--sub);transition:background var(--dur),color var(--dur)}
+  .mi svg{width:24px;height:24px;fill:currentColor}
+  .mi:focus{background:var(--acc);color:#0d1420}
+
+  /* ---------- Toast ---------- */
+  #toast{position:absolute;left:50%;top:84px;z-index:8;transform:translate(-50%,-8px);opacity:0;pointer-events:none;
+    background:var(--panel-hi);border:1px solid var(--line);color:var(--txt);font-size:16px;padding:10px 18px;border-radius:999px;white-space:nowrap;
+    transition:opacity var(--dur),transform var(--dur) var(--ease)}
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+
+  /* ---------- 边界回弹（rubber-band） ---------- */
+  .bump-left{animation:bl 220ms var(--ease)}.bump-right{animation:br 220ms var(--ease)}
+  .bump-up{animation:bu 220ms var(--ease)}.bump-down{animation:bd 220ms var(--ease)}
+  @keyframes bl{40%{transform:translateX(-7px)}}@keyframes br{40%{transform:translateX(7px)}}
+  @keyframes bu{40%{transform:translateY(-6px)}}@keyframes bd{40%{transform:translateY(6px)}}
+
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="frameLabel"><b>600 × 800</b> · 眼镜显示区 · 方向键移动 · Enter 选择 · 长按 Enter / M 更多 · Esc 返回 · B 透视模拟</div>
+<div id="app">
+  <div id="world" aria-hidden="true"></div>
+  <div id="ui">
+    <header id="top"></header>
+    <main id="view"></main>
+    <footer id="hints"></footer>
+  </div>
+  <div id="scrim"></div>
+  <div id="menu" role="menu" aria-hidden="true"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* =========================================================
+   数据：HN 社区反复推荐的经典视频（精选示例集）
+   结构与 HackerTube 的数据导出思路一致，可直接替换为完整数据。
+   缩略图使用 YouTube 自动截取的“中段帧”(hq2.jpg)，
+   复刻 HackerTube “不用作者封面、拒绝标题党” 的做法。
+   ========================================================= */
+const TOPICS = {
+  ai:    { name:'AI 与大模型', glyph:'◎', h:212 },
+  talks: { name:'编程演讲',     glyph:'λ', h:268 },
+  sys:   { name:'系统与底层',   glyph:'⌬', h:150 },
+  math:  { name:'数学可视化',   glyph:'∑', h:36  },
+  sci:   { name:'科学',         glyph:'⚛', h:188 },
+  life:  { name:'人生与思考',   glyph:'❋', h:330 },
+};
+const V = [
+  {id:'kCc8FmEb1nY',k:'ai',c:'Andrej Karpathy',t:"Let's build GPT: from scratch, in code, spelled out.",b:'从零手写一个 Transformer 语言模型，理解 GPT 的每一行代码。'},
+  {id:'PUv66718DII',k:'talks',c:'Bret Victor',t:'Inventing on Principle',b:'创作者需要与作品之间的即时连接——影响了一代实时编程工具。'},
+  {id:'spUNpyF58BY',k:'math',c:'3Blue1Brown',t:'But what is the Fourier Transform? A visual introduction.',b:'用缠绕图形直观理解傅里叶变换。'},
+  {id:'rX0ItVEVjHc',k:'sys',c:'CppCon',t:'CppCon 2014: Mike Acton "Data-Oriented Design and C++"',b:'软件的目的是变换数据，硬件才是真正的平台。'},
+  {id:'UF8uR6Z6KLc',k:'life',c:'Stanford',t:"Steve Jobs' 2005 Stanford Commencement Address",b:'连接点滴、热爱与失去、以及死亡。'},
+  {id:'DxL2HoqLbyA',k:'sci',c:'Veritasium',t:'The Most Misunderstood Concept in Physics',b:'熵到底是什么，以及为什么地球需要的不是“能量”。'},
+  {id:'zjkBMFhNj_g',k:'ai',c:'Andrej Karpathy',t:'[1hr Talk] Intro to Large Language Models',b:'一小时讲清楚大模型是什么、如何训练、走向何方。'},
+  {id:'f84n5oFoZBc',k:'talks',c:'ClojureTV',t:'Hammock Driven Development - Rich Hickey',b:'把思考当作工作的一部分：问题定义比写代码更重要。'},
+  {id:'LnzuMJLZRdU',k:'sys',c:'Ben Eater',t:'"Hello, world" from scratch on a 6502 — Part 1',b:'在面包板上从零搭建 6502 计算机。'},
+  {id:'aircAruvnKk',k:'ai',c:'3Blue1Brown',t:'But what is a neural network? | Deep learning chapter 1',b:'神经网络入门最好的可视化讲解之一。'},
+  {id:'8pTEmbeENF4',k:'talks',c:'Bret Victor',t:'The Future of Programming',b:'假装身处 1973 年，回望那些被遗忘的编程思想。'},
+  {id:'jbkSRLYSojo',k:'sci',c:'BBC',t:"Hans Rosling's 200 Countries, 200 Years, 4 Minutes",b:'四分钟的数据可视化，看懂两百年的世界发展。'},
+  {id:'VMj-3S1tku0',k:'ai',c:'Andrej Karpathy',t:'The spelled-out intro to neural networks and backpropagation: building micrograd',b:'一百行代码实现自动微分引擎，彻底搞懂反向传播。'},
+  {id:'tD5NrevFtbU',k:'sys',c:'Molly Rocket',t:'"Clean" Code, Horrible Performance',b:'Casey Muratori 量化“整洁代码”规则的性能代价。'},
+  {id:'_ahvzDzKdB0',k:'talks',c:'Guy Steele',t:'Growing a Language',b:'只用单音节词开场的经典演讲：语言应当可以被用户生长。'},
+  {id:'fNk_zzaMoSs',k:'math',c:'3Blue1Brown',t:'Vectors | Chapter 1, Essence of linear algebra',b:'线性代数的本质系列第一集。'},
+  {id:'ji5_MqicxSo',k:'life',c:'Carnegie Mellon University',t:'Randy Pausch Last Lecture: Achieving Your Childhood Dreams',b:'一场关于梦想、障碍和如何生活的最后演讲。'},
+  {id:'7xTGNNLPyMI',k:'ai',c:'Andrej Karpathy',t:'Deep Dive into LLMs like ChatGPT',b:'面向普通观众的三小时大模型全景讲解。'},
+  {id:'4XpnKHJAok8',k:'talks',c:'Google',t:'Tech Talk: Linus Torvalds on git',b:'Linus 在 Google 讲解 git 的设计哲学，火药味十足。'},
+  {id:'Qz0KTGYJtUk',k:'sys',c:'Sebastian Lague',t:'Coding Adventure: Ray Tracing',b:'从零写一个光线追踪器，画面极其治愈。'},
+  {id:'d-o3eB9sfls',k:'math',c:'3Blue1Brown',t:'Why is pi here? And why is it squared? A geometric answer to the Basel problem',b:'用灯塔和光照给出巴塞尔问题的几何证明。'},
+  {id:'pW-SOdj4Kkk',k:'talks',c:'DevGAMM',t:'Jonathan Blow - Preventing the Collapse of Civilization',b:'技术会退化：软件复杂度与知识传承的危机。'},
+  {id:'zduSFxRajkE',k:'ai',c:'Andrej Karpathy',t:"Let's build the GPT Tokenizer",b:'大模型很多怪异行为的根源都在分词器。'},
+  {id:'36GT2zI8lVA',k:'sci',c:'BBC',t:'Richard Feynman: Magnets and "Why?" questions',b:'费曼解释为什么“为什么”这个问题很难回答。'},
+  {id:'IOiZatlZtGU',k:'talks',c:'Strange Loop',t:'"Propositions as Types" by Philip Wadler',b:'逻辑与计算之间深刻的对应关系。'},
+  {id:'Gv2I7qTux7g',k:'sys',c:'ChariotSolutions',t:'The Road to Zig 1.0 - Andrew Kelley',b:'为什么我们需要一门新的系统编程语言。'},
+  {id:'HZGCoVF3YvM',k:'math',c:'3Blue1Brown',t:"Bayes theorem, the geometry of changing beliefs",b:'贝叶斯定理的几何直觉。'},
+  {id:'l8pRSuU81PU',k:'ai',c:'Andrej Karpathy',t:"Let's reproduce GPT-2 (124M)",b:'四小时完整复现 GPT-2，从代码到训练调优。'},
+  {id:'lKXe3HUG2l4',k:'talks',c:'Strange Loop',t:'"The Mess We\'re In" by Joe Armstrong',b:'Erlang 之父谈软件为何变得如此混乱。'},
+  {id:'-J_xL4IGhJA',k:'talks',c:'MIT OpenCourseWare',t:'Lecture 1A: Overview and Introduction to Lisp (SICP)',b:'1986 年 Abelson 与 Sussman 的 SICP 第一课。'},
+  {id:'ajGX7odA87k',k:'talks',c:'USENIX',t:'Why Do Keynote Speakers Keep Suggesting That Improving Security Is Possible?',b:'James Mickens 关于安全与机器学习的爆笑演讲。'},
+  {id:'-zRN7XLCRhc',k:'sys',c:'USENIX',t:'Fork Yeah! The Rise and Development of illumos',b:'Bryan Cantrill 讲述 Solaris 与开源的江湖往事。'},
+  {id:'wjZofJX0v4M',k:'ai',c:'3Blue1Brown',t:'Transformers, the tech behind LLMs | Deep Learning Chapter 5',b:'可视化理解 Transformer 的数据流。'},
+  {id:'LCEmiRjPEtQ',k:'ai',c:'Y Combinator',t:'Andrej Karpathy: Software Is Changing (Again)',b:'Software 3.0：自然语言正在成为新的编程语言。'},
+];
+const BY = Object.fromEntries(V.map((v,i)=>[v.id,{...v,rank:i}]));
+
+/* ---------------- 本地状态（无需账号，HackerTube 同款） ---------------- */
+const KEY='glasstube.v1';
+const S = (()=>{ const d={liked:[],later:[],hist:[],hidden:[]};
+  try{ return Object.assign(d, JSON.parse(localStorage.getItem(KEY)||'{}')); }catch{ return d; } })();
+const save=()=>{ try{ localStorage.setItem(KEY,JSON.stringify(S)); }catch{} };
+const has=(l,id)=>S[l].includes(id);
+const toggle=(l,id)=>{ const a=S[l],i=a.indexOf(id); if(i>=0)a.splice(i,1); else a.unshift(id); save(); return i<0; };
+const addHist=id=>{ S.hist=[id,...S.hist.filter(x=>x!==id)].slice(0,60); save(); };
+const visible=ids=>ids.filter(id=>BY[id] && !has('hidden',id));
+
+/* ---------------- “为你推荐”：纯浏览器端的兴趣模型 ---------------- */
+function affinity(){
+  const a={}, ch={};
+  const add=(id,w)=>{ const v=BY[id]; if(!v)return; a[v.k]=(a[v.k]||0)+w; ch[v.c]=(ch[v.c]||0)+w; };
+  S.liked.forEach(id=>add(id,3));
+  S.later.forEach(id=>add(id,2));
+  S.hist.forEach((id,i)=>add(id,1/(1+i*.35)));
+  return {a,ch};
+}
+function recommend(n=12, exclude=[]){
+  const {a,ch}=affinity(), seen=new Set([...S.hist.slice(0,8),...S.hidden,...exclude]);
+  const out=V.filter(v=>!seen.has(v.id)).map(v=>{
+    const r=BY[v.id].rank, ta=a[v.k]||0, ca=ch[v.c]||0;
+    const score=ta+ca*1.2+(1-r/V.length)*.8;
+    let why='HN 经典';
+    if(ca>=1) why=`因为你看过 ${v.c}`;
+    else if(ta>=1) why=`因为你喜欢「${TOPICS[v.k].name}」`;
+    return {v,score,why};
+  }).sort((x,y)=>y.score-x.score);
+  return out.slice(0,n);
+}
+
+/* ---------------- 工具 ---------------- */
+const $=s=>document.querySelector(s);
+const app=$('#app'), top=$('#top'), view=$('#view'), hints=$('#hints'), menuEl=$('#menu'), toastEl=$('#toast');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const initials=s=>s.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();
+const fmt=s=>{ s=Math.max(0,Math.floor(s||0)); const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=String(s%60).padStart(2,'0'); return h?`${h}:${String(m).padStart(2,'0')}:${x}`:`${m}:${x}`; };
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const P = {
+  play:'M8 5v14l11-7z', pause:'M6 5h4v14H6zM14 5h4v14h-4z',
+  rew:'M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z', fwd:'M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z',
+  heart:'M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z',
+  later:'M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6l5 3 1-1.7-4-2.3z',
+  hide:'M12 2a10 10 0 100 20 10 10 0 000-20zM4 12a8 8 0 0112.9-6.3L5.7 16.9A8 8 0 014 12zm8 8a8 8 0 01-4.9-1.7L18.3 7.1A8 8 0 0112 20z',
+  search:'M15.5 14h-.8l-.3-.3A6.5 6.5 0 109.5 16a6.5 6.5 0 004.2-1.6l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 110-9 4.5 4.5 0 010 9z',
+  next:'M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z',
+};
+const ic=(p,cls='')=>`<svg viewBox="0 0 24 24" class="${cls}" aria-hidden="true"><path d="${P[p]}"/></svg>`;
+
+/* ---------------- 模板 ---------------- */
+function thumb(v){
+  return `<div class="thumb" style="--h:${TOPICS[v.k].h}"><span class="ph">${esc(initials(v.c))}</span>`+
+    `<img alt="" loading="lazy" decoding="async" src="https://i.ytimg.com/vi/${v.id}/hq2.jpg" data-vid="${v.id}">`+
+    `${badges(v.id)}</div>`;
+}
+function badges(id){
+  const b=[]; if(has('liked',id)) b.push(`<i>${ic('heart')}</i>`); if(has('later',id)) b.push(`<i>${ic('later')}</i>`);
+  return (b.length?`<span class="badge">${b.join('')}</span>`:'') + (has('hist',id)?'<span class="watched"></span>':'');
+}
+const card=(v,key)=>`<button class="f card" data-key="${key}" data-vid="${v.id}" aria-label="${esc(v.t)}">${thumb(v)}<div class="ct">${esc(v.t)}</div><div class="cm">${esc(v.c)}</div></button>`;
+const row=(v,key,why)=>`<button class="f row" data-key="${key}" data-vid="${v.id}" aria-label="${esc(v.t)}">${thumb(v)}<div class="rt"><div class="t">${esc(v.t)}</div><div class="m">${esc(v.c)} · ${TOPICS[v.k].name}</div>${why?`<span class="why">${esc(why)}</span>`:''}</div></button>`;
+function shelf(id,title,ids,emptyMsg){
+  const vs=visible(ids);
+  if(!vs.length) return emptyMsg?`<section class="shelf"><h3>${esc(title)}</h3><div class="empty">${esc(emptyMsg)}</div></section>`:'';
+  return `<section class="shelf"><h3>${esc(title)}<span>${vs.length}</span></h3><div class="track" id="tr-${id}">${vs.map(i=>card(BY[i],`${id}:${i}`)).join('')}</div></section>`;
+}
+// 缩略图回退：hq2(中段帧) → hqdefault → 渐变占位
+document.addEventListener('error',e=>{
+  const img=e.target; if(img.tagName!=='IMG'||!img.dataset.vid) return;
+  if(!img.dataset.f){ img.dataset.f=1; img.src=`https://i.ytimg.com/vi/${img.dataset.vid}/hqdefault.jpg`; } else img.remove();
+},true);
+
+/* =========================================================
+   屏幕定义
+   每个屏幕返回 { tabs|title, html, hints, focus, after }
+   主要任务放在左上，保证初始焦点落在最有用的位置
+   ========================================================= */
+const TABS=[['home','首页'],['foryou','为你推荐'],['topics','话题'],['library','片库'],['search','搜索']];
+const H_NAV=[['↕↔','移动'],['●','选择'],['长按','更多'],['Esc','返回']];
+
+const SCREENS = {
+  home(){
+    const classic=[...V].sort((a,b)=>BY[a.id].rank-BY[b.id].rank).slice(0,10).map(v=>v.id);
+    let html='';
+    if(S.hist.length) html+=shelf('cont','继续观看',S.hist.slice(0,10));
+    html+=shelf('top','HN 经典精选',classic);
+    for(const k in TOPICS) html+=shelf(k,TOPICS[k].name,V.filter(v=>v.k===k).map(v=>v.id));
+    return {tabs:true, html, hints:H_NAV};
+  },
+  foryou(){
+    const rec=recommend(12);
+    if(!rec.length) return {tabs:true, html:`<div class="empty">你已经看完了所有推荐 🎉</div>`, hints:H_NAV};
+    const [h,...rest]=rec;
+    const cold=!S.liked.length&&!S.hist.length&&!S.later.length;
+    const html=
+      `<button class="f hero" data-key="hero:${h.v.id}" data-vid="${h.v.id}">${thumb(h.v)}<div class="ov"><div class="why">${esc(h.why)}</div><div class="t">${esc(h.v.t)}</div><div class="m">${esc(h.v.c)}</div></div></button>`+
+      (cold?`<div class="empty">推荐只保存在这副眼镜的浏览器里：看过、点赞、稍后观看都会让它更懂你。</div>`:'')+
+      `<div class="section-h">更多推荐</div><div class="list">${rest.map(r=>row(r.v,`fy:${r.v.id}`,r.why)).join('')}</div>`;
+    return {tabs:true, html, hints:H_NAV};
+  },
+  topics(){
+    const html=`<div class="grid">${Object.entries(TOPICS).map(([k,t])=>
+      `<button class="f tile" data-key="topic:${k}" data-topic="${k}" style="--h:${t.h}"><span class="g">${t.glyph}</span><span><div class="n">${t.name}</div><div class="c">${V.filter(v=>v.k===k).length} 个视频</div></span></button>`).join('')}</div>`;
+    return {tabs:true, html, hints:[['↕↔','移动'],['●','打开话题'],['Esc','返回']]};
+  },
+  topic(e){
+    const t=TOPICS[e.k];
+    const html=`<div class="list">${visible(V.filter(v=>v.k===e.k).map(v=>v.id)).map(id=>row(BY[id],`tp:${id}`)).join('')}</div>`;
+    return {title:t.name, crumb:'话题', html, hints:H_NAV};
+  },
+  library(){
+    let html=shelf('later','稍后观看',S.later,'长按任意视频 → 稍后观看')+
+             shelf('liked','已点赞',S.liked,'在播放页点赞的视频会出现在这里')+
+             shelf('hist','观看历史',S.hist,'还没有观看记录');
+    if(S.hist.length||S.hidden.length)
+      html+=`<div class="chips">${S.hist.length?`<button class="f chip danger" data-key="act:clearhist" data-act="clearhist">清除观看历史</button>`:''}${S.hidden.length?`<button class="f chip" data-key="act:unhide" data-act="unhide">恢复 ${S.hidden.length} 个已隐藏</button>`:''}</div>`;
+    return {tabs:true, html, hints:H_NAV};
+  },
+  search(e){
+    const q=e.q||'';
+    const html=`<div class="sbox">${ic('search')}<input id="q" class="f" data-key="q" type="text" value="${esc(q)}" placeholder="捏合输入 · 语音或手写" autocomplete="off" spellcheck="false" enterkeyhint="search"></div>`+
+      `<div class="chips">${['Karpathy','3Blue1Brown','Bret Victor','Rich Hickey','Strange Loop'].map(s=>`<button class="f chip" data-key="qs:${s}" data-q="${esc(s)}">${esc(s)}</button>`).join('')}</div>`+
+      `<div id="results">${results(q)}</div>`;
+    return {tabs:true, html, hints:[['↕↔','移动'],['●','输入 / 选择'],['Esc','返回']]};
+  },
+  watch(e){
+    const v=BY[e.vid];
+    const next=related(v);
+    const html=
+      `<div class="player"><div id="yt"></div><div class="pfb" id="pfb">${thumb(v)}<div class="pmsg" id="pmsg">正在加载播放器…</div></div></div>`+
+      `<div class="prog"><div class="bar"><i id="pbar"></i></div><span id="ptime">0:00 / --:--</span></div>`+
+      `<div class="winfo"><h1>${esc(v.t)}</h1><p>${esc(v.c)} · ${TOPICS[v.k].name}</p></div>`+
+      `<div class="rail" id="rail">`+
+        rb('rew','rew','−10 秒')+rb('play','play','播放')+rb('fwd','fwd','+10 秒')+
+        rb('like','heart','点赞',has('liked',v.id))+rb('later','later','稍后',has('later',v.id))+
+      `</div>`+
+      `<p class="blurb">${esc(v.b)}</p>`+
+      shelf('next','接下来播放',next);
+    return {title:v.c, crumb:'正在播放', html, focus:'act:play', watch:true,
+      hints:[['●','操作'],['↕','控件 / 推荐'],['Esc','返回']], after:()=>mountPlayer(v.id)};
+  },
+};
+const rb=(act,icon,label,on)=>`<button class="f rb${on?' on':''}" data-key="act:${act}" data-act="${act}" id="rb-${act}" aria-label="${label}"><span class="ic">${ic(icon)}</span><span>${label}</span></button>`;
+function related(v){
+  const same=V.filter(x=>x.k===v.k&&x.id!==v.id).map(x=>x.id);
+  const rec=recommend(12,[v.id]).map(r=>r.v.id).filter(id=>!same.includes(id));
+  return [...same.slice(0,5),...rec].slice(0,10);
+}
+function results(q){
+  q=q.trim().toLowerCase();
+  if(!q) return `<div class="empty">搜索标题、频道或话题。在眼镜上捏合输入框即可唤起语音 / 手写输入。</div>`;
+  const r=V.filter(v=>(v.t+' '+v.c+' '+v.b+' '+TOPICS[v.k].name).toLowerCase().includes(q));
+  return r.length?`<div class="section-h">${r.length} 个结果</div><div class="list">${r.map(v=>row(v,`sr:${v.id}`)).join('')}</div>`:`<div class="empty">没有找到“${esc(q)}”</div>`;
+}
+
+/* =========================================================
+   路由 + 返回栈（浅层级：根 Tab → 详情 → 播放；history ≤ 5 条）
+   ========================================================= */
+let curTab='home', stack=[{name:'home'}], tabEntry=false, menuOpen=false;
+let useHist=true; try{ history.replaceState({g:0},''); }catch{ useHist=false; }
+const hpush=()=>{ if(useHist) try{ history.pushState({g:1},''); }catch{ useHist=false; } };
+const topE=()=>stack[stack.length-1];
+
+function render(){
+  const e=topE(), scr=SCREENS[e.name](e);
+  cleanupWatch();
+  app.classList.toggle('watching',!!scr.watch);
+  top.innerHTML = scr.tabs
+    ? `<nav class="tabs" role="tablist">${TABS.map(([k,l])=>`<button class="f tab${k===curTab?' on':''}" role="tab" aria-selected="${k===curTab}" data-key="tab:${k}" data-tab="${k}">${l}</button>`).join('')}</nav>`
+    : `<div class="titlebar"><span class="crumb">${esc(scr.crumb||'')}</span><h2>${esc(scr.title||'')}</h2></div>`;
+  view.innerHTML=`<div class="vs screen-in" id="vs">${scr.html}</div>`;
+  hints.innerHTML=scr.hints.map(([k,l])=>`<span class="h"><kbd>${k}</kbd>${l}</span>`).join('')+`<span id="clock"></span>`;
+  tick();
+  const vs=$('#vs'); vs.addEventListener('scroll',()=>fades(vs),{passive:true});
+  view.querySelectorAll('.track').forEach(t=>t.addEventListener('scroll',()=>fades(t),{passive:true}));
+  // 恢复：滚动位置 + 货架记忆 + 焦点（作为一个整体恢复）
+  const sv=e.saved;
+  if(sv){
+    vs.scrollTop=sv.vs||0;
+    for(const id in sv.tracks){ const t=document.getElementById(id); if(t){ t.scrollLeft=sv.tracks[id][0]; if(sv.tracks[id][1]) t.dataset.last=sv.tracks[id][1]; } }
+  }
+  requestAnimationFrame(()=>{
+    view.querySelectorAll('.track').forEach(fades); fades(vs);
+    const want=(sv&&sv.key)||e.focusKey||scr.focus;
+    const el=want&&byKey(want);
+    if(el) focusEl(el,true); else initialFocus(true);
+  });
+  scr.after&&scr.after();
+}
+function snapshot(e){
+  const a=document.activeElement, vs=$('#vs');
+  e.saved={ key:a&&a.dataset?a.dataset.key:null, vs:vs?vs.scrollTop:0,
+    tracks:Object.fromEntries([...view.querySelectorAll('.track')].map(t=>[t.id,[t.scrollLeft,t.dataset.last||'']])) };
+}
+function push(entry){ snapshot(topE()); stack.push(entry); hpush(); render(); }
+function replaceTop(entry){ stack[stack.length-1]=entry; render(); }
+function popScreen(){ stack.pop(); render(); }
+function setTab(t){
+  if(t===curTab) return;
+  if(t==='home'){ if(tabEntry){ goBack(); return; } }
+  else if(!tabEntry){ tabEntry=true; hpush(); }
+  switchTab(t);
+}
+function switchTab(t){ curTab=t; stack=[{name:t,focusKey:'tab:'+t}]; render(); }
+const canBack=()=>menuOpen||stack.length>1||tabEntry;
+function goBack(){
+  if(!canBack()){ bump(document.activeElement,'up'); return; }
+  if(useHist) history.back(); else handlePop();
+}
+function handlePop(){
+  if(menuOpen) return closeMenu();
+  if(stack.length>1) return popScreen();
+  if(tabEntry){ tabEntry=false; switchTab('home'); }
+}
+window.addEventListener('popstate',handlePop);
+
+/* =========================================================
+   焦点引擎：单一焦点所有者 + 基于几何位置的方向导航
+   · 横向：只在垂直方向有重叠的元素间移动（同一行/货架）
+   · 纵向：按距离 + 横向偏移打分；进入货架时恢复上次位置
+   · 无目标：边界回弹反馈
+   ========================================================= */
+let lastFocused=null;
+const byKey=k=>document.querySelector(`[data-key="${CSS.escape(k)}"]`);
+function focusables(){
+  const scope=menuOpen?menuEl:$('#ui');
+  return [...scope.querySelectorAll('.f')].filter(el=>!el.disabled&&el.offsetParent!==null);
+}
+function initialFocus(instant){
+  const list=focusables();
+  const el=(menuOpen?list[0]:list.find(x=>view.contains(x)))||list[0];
+  if(el) focusEl(el,instant);
+}
+function focusEl(el,instant){
+  el.focus({preventScroll:true});
+  lastFocused=el;
+  const tr=el.closest('.track'); if(tr) tr.dataset.last=el.dataset.key;
+  reveal(el,instant);
+}
+function reveal(el,instant){
+  const behavior=(instant||reduced)?'auto':'smooth';
+  const tr=el.closest('.track');
+  if(tr){ const idx=[...tr.children].indexOf(el); tr.scrollTo({left: idx===0?0:Math.max(0,el.offsetLeft-24), behavior}); }
+  const vs=el.closest('.vs'); if(!vs) return;
+  const unit=el.closest('.shelf')||el;
+  const vr=vs.getBoundingClientRect(), ur=unit.getBoundingClientRect();
+  const y=ur.top-vr.top+vs.scrollTop, h=ur.height, padT=30, padB=50;
+  const first=focusables().find(x=>vs.contains(x));
+  let to=null;
+  if(unit.contains(first)||el===first) to=0;                         // 第一个元素：滚到绝对起点
+  else if(y-padT<vs.scrollTop) to=y-padT;
+  else if(y+h+padB>vs.scrollTop+vs.clientHeight) to=y+h+padB-vs.clientHeight;
+  if(to!==null) vs.scrollTo({top:Math.max(0,to),behavior});
+}
+function move(dir){
+  const cur=document.activeElement, list=focusables();
+  if(!list.includes(cur)){ (lastFocused&&list.includes(lastFocused))?focusEl(lastFocused):initialFocus(); return; }
+  const r=cur.getBoundingClientRect(), cx=(r.left+r.right)/2, cy=(r.top+r.bottom)/2;
+  let best=null, bs=Infinity;
+  for(const el of list){
+    if(el===cur) continue;
+    const c=el.getBoundingClientRect(), ex=(c.left+c.right)/2, ey=(c.top+c.bottom)/2;
+    let s;
+    if(dir==='left'||dir==='right'){
+      const p=dir==='right'?ex-cx:cx-ex; if(p<=4) continue;
+      const ov=Math.min(c.bottom,r.bottom)-Math.max(c.top,r.top); if(ov<=Math.min(c.height,r.height)*.3) continue;
+      s=p+Math.abs(ey-cy)*2;
+    }else{
+      const p=dir==='down'?c.top-r.bottom:r.top-c.bottom; if(p<-Math.min(c.height,r.height)*.5) continue;
+      const ov=Math.min(c.right,r.right)-Math.max(c.left,r.left);
+      s=Math.max(p,0)*1.2+Math.abs(ex-cx)*(ov>0?.25:1.1);
+    }
+    if(s<bs){ bs=s; best=el; }
+  }
+  if(!best){ bump(cur,dir); return; }
+  if(dir==='up'||dir==='down'){
+    const tr=best.closest('.track');
+    if(tr&&tr!==cur.closest('.track')&&tr.dataset.last){ const m=byKey(tr.dataset.last); if(m&&tr.contains(m)) best=m; }
+    // 从内容区进入 Tab 栏：落在当前选中的 Tab（SubNavigation 行为）
+    if(best.classList.contains('tab')&&!cur.classList.contains('tab')){ const on=top.querySelector('.tab.on'); if(on) best=on; }
+  }
+  focusEl(best);
+}
+function bump(el,dir){
+  if(!el||!el.classList) return;
+  const c='bump-'+dir; el.classList.remove(c); void el.offsetWidth; el.classList.add(c);
+  setTimeout(()=>el.classList.remove(c),240);
+}
+function fades(el){
+  if(el.classList.contains('track')){
+    el.classList.toggle('fl',el.scrollLeft>4);
+    el.classList.toggle('fr',el.scrollLeft+el.clientWidth<el.scrollWidth-4);
+  }else{
+    el.classList.toggle('ft',el.scrollTop>4);
+    el.classList.toggle('fb',el.scrollTop+el.clientHeight<el.scrollHeight-4);
+  }
+}
+document.addEventListener('focusin',e=>{ if(e.target.classList&&e.target.classList.contains('f')){ lastFocused=e.target; const tr=e.target.closest('.track'); if(tr) tr.dataset.last=e.target.dataset.key; } });
+// 防止 YouTube iframe 抢走焦点（否则方向键会失效）
+window.addEventListener('blur',()=>setTimeout(()=>{ if(document.activeElement&&document.activeElement.tagName==='IFRAME'&&lastFocused) lastFocused.focus({preventScroll:true}); },0));
+
+/* =========================================================
+   输入：方向键 / Enter(捏合) / 长按 / 返回
+   ========================================================= */
+let pressEl=null, pressTimer=0, pressFired=false;
+const BACK_KEYS=new Set(['Escape','GoBack','BrowserBack']);
+const DIRS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right'};
+document.addEventListener('keydown',e=>{
+  const k=e.key, inInput=e.target.tagName==='INPUT';
+  activity();
+  if(app.classList.contains('immersive')&&!BACK_KEYS.has(k)&&k!=='Backspace'){
+    // 沉浸模式下第一次输入只唤出控件，不触发动作
+    e.preventDefault(); exitImmersive(); scheduleImmersive(); return;
+  }
+  if(DIRS[k]){
+    if(inInput&&(k==='ArrowLeft'||k==='ArrowRight')&&e.target.value) return;
+    e.preventDefault(); move(DIRS[k]); return;
+  }
+  if(BACK_KEYS.has(k)||(k==='Backspace'&&!inInput)){ e.preventDefault(); goBack(); return; }
+  if(k==='Enter'||k===' '){
+    if(inInput){ if(k==='Enter'&&e.target.value.trim()){ e.preventDefault(); const f=$('#results .f'); if(f) focusEl(f); } return; }
+    const el=document.activeElement;
+    e.preventDefault();
+    if(!el||!el.classList||!el.classList.contains('f')){ initialFocus(); return; }
+    if(e.repeat) return;
+    if(el.dataset.vid){
+      pressEl=el; pressFired=false; el.classList.add('pressing');
+      pressTimer=setTimeout(()=>{ pressFired=true; el.classList.remove('pressing'); openMenu(el.dataset.vid,el); },550);
+    }else el.click();
+    return;
+  }
+  if((k==='m'||k==='ContextMenu')&&!inInput){ const el=document.activeElement; if(el&&el.dataset&&el.dataset.vid){ e.preventDefault(); openMenu(el.dataset.vid,el); } }
+  if(k==='b'&&!inInput){ app.classList.toggle('pt'); toast(app.classList.contains('pt')?'透视模拟：开（加色混合）':'透视模拟：关'); }
+});
+document.addEventListener('keyup',e=>{
+  if((e.key==='Enter'||e.key===' ')&&pressEl){
+    clearTimeout(pressTimer); const el=pressEl; pressEl=null; el.classList.remove('pressing');
+    if(!pressFired) el.click();
+  }
+});
+// 触屏/鼠标：长按 = 上下文菜单
+document.addEventListener('contextmenu',e=>{ const el=e.target.closest('[data-vid].f'); if(el){ e.preventDefault(); el.focus({preventScroll:true}); openMenu(el.dataset.vid,el); } });
+
+/* 点击分发（键盘 Enter / 捏合 / 触屏 共用同一激活路径） */
+app.addEventListener('click',e=>{
+  const el=e.target.closest('.f'); if(!el) return;
+  if(el.tagName==='INPUT') return;
+  if(document.activeElement!==el) focusEl(el,true);
+  const d=el.dataset;
+  if(d.mact) return menuAction(d.mact);
+  if(d.tab) return setTab(d.tab);
+  if(d.topic) return push({name:'topic',k:d.topic});
+  if(d.q!==undefined){ const i=$('#q'); i.value=d.q; topE().q=d.q; $('#results').innerHTML=results(d.q); return; }
+  if(d.act) return action(d.act);
+  if(d.vid) return openWatch(d.vid);
+});
+view.addEventListener('input',e=>{ if(e.target.id==='q'){ topE().q=e.target.value; $('#results').innerHTML=results(e.target.value); } });
+
+function openWatch(id){
+  addHist(id);
+  if(topE().name==='watch') replaceTop({name:'watch',vid:id});   // 连续播放不加深历史栈
+  else push({name:'watch',vid:id});
+}
+function action(a){
+  const e=topE();
+  if(a==='clearhist'){ S.hist=[]; save(); toast('已清除观看历史'); return replaceTop({name:'library',focusKey:'tab:library'}); }
+  if(a==='unhide'){ S.hidden=[]; save(); toast('已恢复'); return replaceTop({name:'library',focusKey:'tab:library'}); }
+  if(e.name!=='watch') return;
+  const id=e.vid;
+  if(a==='like'){ const on=toggle('liked',id); $('#rb-like').classList.toggle('on',on); toast(on?'已点赞 · 推荐会更懂你':'已取消点赞'); }
+  if(a==='later'){ const on=toggle('later',id); $('#rb-later').classList.toggle('on',on); toast(on?'已加入稍后观看':'已移出稍后观看'); }
+  if(a==='play'){ if(!player||!player.getPlayerState) return toast('播放器不可用'); (player.getPlayerState()===1)?player.pauseVideo():player.playVideo(); }
+  if(a==='rew'||a==='fwd'){ if(!player||!player.getCurrentTime) return toast('播放器不可用'); player.seekTo(Math.max(0,player.getCurrentTime()+(a==='fwd'?10:-10)),true); toast(a==='fwd'?'+10 秒':'−10 秒'); }
+}
+
+/* =========================================================
+   上下文菜单（返回键优先关闭菜单，并把焦点还给触发者）
+   ========================================================= */
+let menuAnchor=null, menuVid=null;
+function openMenu(id,anchor){
+  const v=BY[id]; if(!v) return;
+  menuAnchor=anchor; menuVid=id; menuOpen=true;
+  menuEl.innerHTML=`<div class="mh">${thumb(v)}<div class="t">${esc(v.t)}</div></div>`+
+    mi('play','play','播放')+mi('later','later',has('later',id)?'移出稍后观看':'稍后观看')+
+    mi('like','heart',has('liked',id)?'取消点赞':'点赞')+mi('hide','hide','不感兴趣');
+  menuEl.setAttribute('aria-hidden','false');
+  $('#ui').inert=true; app.classList.add('menu');
+  hpush();
+  requestAnimationFrame(()=>focusEl(menuEl.querySelector('.f'),true));
+}
+const mi=(a,icon,l)=>`<button class="f mi" role="menuitem" data-key="m:${a}" data-mact="${a}">${ic(icon)}${l}</button>`;
+function closeMenu(after){
+  menuOpen=false; app.classList.remove('menu'); $('#ui').inert=false; menuEl.setAttribute('aria-hidden','true');
+  if(after) after(); else if(menuAnchor&&document.contains(menuAnchor)) focusEl(menuAnchor,true); else initialFocus(true);
+}
+function menuAction(a){
+  const id=menuVid, anchorKey=menuAnchor&&menuAnchor.dataset.key;
+  const finish=fn=>{ if(useHist){ const h=()=>{ window.removeEventListener('popstate',h,true); setTimeout(fn,0); }; window.addEventListener('popstate',h,true); history.back(); } else { closeMenu(); fn(); } };
+  if(a==='play') return finish(()=>openWatch(id));
+  if(a==='later'){ const on=toggle('later',id); toast(on?'已加入稍后观看':'已移出稍后观看'); }
+  if(a==='like'){ const on=toggle('liked',id); toast(on?'已点赞':'已取消点赞'); }
+  if(a==='hide'){ if(!has('hidden',id)) S.hidden.push(id); save(); toast('已隐藏，推荐将减少此类内容'); }
+  finish(()=>{ // 刷新当前屏幕以更新角标，并恢复焦点
+    const e=topE(); snapshot(e); if(e.saved) e.saved.key=anchorKey; render();
+  });
+}
+
+/* =========================================================
+   播放器：YouTube IFrame API（隐藏原生控件，用焦点控件代替）
+   ========================================================= */
+let player=null, ytP=null, watchToken=0, progTimer=0, idleTimer=0;
+function loadYT(){
+  if(ytP) return ytP;
+  ytP=new Promise((res,rej)=>{
+    if(window.YT&&YT.Player) return res();
+    window.onYouTubeIframeAPIReady=res;
+    const s=document.createElement('script'); s.src='https://www.youtube.com/iframe_api'; s.onerror=rej; document.head.appendChild(s);
+    setTimeout(()=>rej(new Error('timeout')),9000);
+  }).catch(err=>{ ytP=null; throw err; });
+  return ytP;
+}
+function mountPlayer(vid){
+  const token=++watchToken;
+  loadYT().then(()=>{
+    if(token!==watchToken) return;
+    player=new YT.Player('yt',{ videoId:vid, host:'https://www.youtube-nocookie.com',
+      playerVars:{autoplay:1,controls:0,rel:0,playsinline:1,modestbranding:1,iv_load_policy:3,fs:0,disablekb:1},
+      events:{
+        onReady:ev=>{ const f=ev.target.getIframe(); f.tabIndex=-1; f.setAttribute('aria-hidden','true'); ev.target.playVideo(); setMsg('点击“播放”开始（若未自动播放）'); },
+        onStateChange:onState,
+        onError:ev=>{ console.warn('YT error',ev.data); $('#pfb')&&$('#pfb').classList.remove('hide');
+          setMsg(ev.data===101||ev.data===150?'作者不允许嵌入播放该视频。':`播放器错误（${ev.data}），请稍后重试。`); },
+      }});
+    progTimer=setInterval(updateProg,500);
+  }).catch(()=>{ if(token===watchToken) setMsg('播放器在当前环境中被拦截（如预览沙盒）。在模拟器或眼镜上打开即可播放。'); });
+}
+const setMsg=m=>{ const el=$('#pmsg'); if(el) el.textContent=m; };
+function onState(ev){
+  const s=ev.data, pb=$('#rb-play');
+  if(s===1){ $('#pfb')&&$('#pfb').classList.add('hide'); setPlayBtn(pb,true); scheduleImmersive(); }
+  if(s===2||s===0){ setPlayBtn(pb,false); exitImmersive(); }
+  if(s===0){ const n=$('#tr-next .f'); if(n){ focusEl(n); toast('播放结束 · 选择下一个'); } }
+}
+function setPlayBtn(pb,playing){ if(!pb) return; pb.querySelector('.ic').innerHTML=ic(playing?'pause':'play'); pb.querySelector('span:last-child').textContent=playing?'暂停':'播放'; pb.setAttribute('aria-label',playing?'暂停':'播放'); }
+function updateProg(){
+  if(!player||!player.getDuration) return;
+  const d=player.getDuration()||0, t=player.getCurrentTime()||0;
+  const b=$('#pbar'), tt=$('#ptime'); if(!b) return;
+  b.style.width=d?(t/d*100)+'%':'0'; tt.textContent=`${fmt(t)} / ${d?fmt(d):'--:--'}`;
+}
+function cleanupWatch(){
+  watchToken++; clearInterval(progTimer); exitImmersive();
+  if(player){ try{ player.destroy(); }catch{} player=null; }
+}
+function scheduleImmersive(){
+  clearTimeout(idleTimer);
+  idleTimer=setTimeout(()=>{ if(player&&player.getPlayerState&&player.getPlayerState()===1&&!menuOpen&&topE().name==='watch'){ const vs=$('#vs'); if(vs) vs.scrollTo({top:0,behavior:reduced?'auto':'smooth'}); app.classList.add('immersive'); } },4500);
+}
+function exitImmersive(){ clearTimeout(idleTimer); app.classList.remove('immersive'); }
+function activity(){ if(topE().name==='watch'&&!app.classList.contains('immersive')) scheduleImmersive(); }
+
+/* ---------------- Toast / 时钟 ---------------- */
+let toastT=0;
+function toast(m){ toastEl.textContent=m; toastEl.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove('show'),1700); }
+function tick(){ const c=$('#clock'); if(c){ const d=new Date(); c.textContent=`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } }
+setInterval(tick,15000);
+
+render();
+})();
+</script>
+</body>
+</html>

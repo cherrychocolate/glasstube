@@ -1,0 +1,61 @@
+/* Standalone adapter for the MyCraft service shell. */
+let osPage = 'bilibili';
+const osData = {settings: {volume: 60}};
+const esc = value => String(value).replace(/[&<>"']/g, character =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[character]);
+let osContent = () => '';
+let osClick = () => {};
+let osNavigate = page => {
+  osPage = page === 'center' ? 'bilibili' : page;
+  renderOS();
+  requestAnimationFrame(() => window.LegoGamepad.refreshFocus(true));
+};
+let renderOS = () => {
+  document.querySelector('.os-page-surface').innerHTML = osContent();
+};
+
+const focusables = () => [...document.querySelectorAll('.bili-app [data-bili-id]')]
+  .filter(element => !element.disabled && !element.closest('[inert],[hidden]') && element.getClientRects().length);
+function focusElement(element) {
+  if (!element) return false;
+  document.querySelector('.device-focus')?.classList.remove('device-focus');
+  element.classList.add('device-focus');
+  element.focus({preventScroll:true});
+  element.scrollIntoView({block:'nearest',inline:'nearest'});
+  return true;
+}
+window.LegoGamepad = {
+  focusElement,
+  refreshFocus() {
+    const controls = focusables();
+    return focusElement(controls.find(control => control.hasAttribute('data-focus-default')) || controls[0]);
+  }
+};
+document.addEventListener('click', event => osClick(event));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    window.BilibiliService?.back();
+    return;
+  }
+  if (!event.key.startsWith('Arrow') || event.target.matches('input,textarea,select')) return;
+  event.preventDefault();
+  const active = document.activeElement;
+  if (!focusables().includes(active)) return window.LegoGamepad.refreshFocus();
+  const center = element => {
+    const rect = element.getBoundingClientRect();
+    return [rect.x + rect.width / 2, rect.y + rect.height / 2];
+  };
+  const origin = center(active);
+  const axis = ['ArrowLeft','ArrowRight'].includes(event.key) ? 0 : 1;
+  const sign = ['ArrowLeft','ArrowUp'].includes(event.key) ? -1 : 1;
+  const candidates = focusables().flatMap(control => {
+    const point = center(control);
+    const distance = (point[axis] - origin[axis]) * sign;
+    const offset = Math.abs(point[1-axis] - origin[1-axis]);
+    return distance > 2 ? [{control, score:distance + 3 * offset}] : [];
+  });
+  candidates.sort((a,b) => a.score - b.score);
+  focusElement(candidates[0]?.control);
+});
+document.addEventListener('DOMContentLoaded', () => window.BilibiliService.open(), {once:true});

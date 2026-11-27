@@ -1,0 +1,156 @@
+/* Scoped device surface. All dimensions are logical pixels before simulator scaling. */
+.os-display .bili-app{position:relative;width:100%;height:calc(100% - 40px);min-height:0;background:#10141d;color:#f3f5fa!important;overflow:hidden;border-radius:18px;font-family:system-ui,-apple-system,sans-serif;isolation:isolate}
+.os-display .bili-body{height:100%;padding:20px 28px 24px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;overscroll-behavior:contain}
+.os-display .bili-app *{box-sizing:border-box}.os-display .bili-app button,.os-display .bili-app a{font:inherit;color:#eef2fa!important;background:#232d40!important;border:2px solid transparent!important;min-height:58px;border-radius:16px;padding:12px 15px;line-height:1.25;text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:24px;white-space:normal;box-shadow:none!important;letter-spacing:0}
+.os-display .bili-app button:focus,.os-display .bili-app a:focus,.os-display .bili-app .device-focus,.os-display .bili-app input:focus{outline:4px solid #ff91b7!important;outline-offset:1px;border-color:#fff!important;background:#3c2b41!important}
+.os-display .bili-app button[aria-pressed=true]{background:#573347!important;border-color:#fd8db3!important}
+.os-display .bili-head{display:flex;justify-content:space-between;gap:14px;align-items:center;margin:0 0 12px;min-height:58px}.os-display .bili-head small{display:block;color:#ff95b8!important;font-size:16px;letter-spacing:1px}.os-display .bili-head h1{color:#f3f5fa!important;font-size:32px;line-height:1.3;margin:4px 0;font-weight:650}.os-display .bili-head button{font-size:22px;padding:12px;min-width:72px}
+.os-display .bili-kicker{font-size:20px!important;line-height:1.5;color:#b7c6dc!important;margin:8px 0 14px}.os-display .bili-nav,.os-display .bili-actions,.os-display .bili-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0}.os-display .bili-switch,.os-display .bili-quick{display:flex;gap:10px;margin:14px 0}.os-display .bili-switch button{flex:1;font-size:22px}.os-display .bili-quick button{font-size:22px;flex:1}
+.os-display .bili-list{display:flex;flex-direction:column;gap:16px;margin:16px 0}.os-display .bili-app .bili-card{display:flex;text-align:left;padding:12px;gap:16px;justify-content:flex-start;min-height:138px;flex-shrink:0;width:100%}.os-display .bili-thumb{width:134px;height:104px;flex-shrink:0;display:flex;justify-content:space-between;flex-direction:column;background:linear-gradient(135deg,#6d365a,#202942);border-radius:12px;padding:12px}.os-display .bili-thumb span{font-size:14px;letter-spacing:1px;color:#ffbed3!important}.os-display .bili-thumb b{font-size:32px;align-self:flex-end}.os-display .tone-blue .bili-thumb,.os-display .bili-detail-art.tone-blue{background:linear-gradient(135deg,#28516b,#283047)}.os-display .tone-purple .bili-thumb,.os-display .bili-detail-art.tone-purple{background:linear-gradient(135deg,#4d397a,#283047)}.os-display .bili-card-copy{display:flex;flex-direction:column;gap:7px;min-width:0}.os-display .bili-card strong{font-size:25px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#fff!important}.os-display .bili-card small,.os-display .bili-card em{font-size:17px;line-height:1.4;font-style:normal;color:#b9c5d8!important}
+.os-display .bili-note,.os-display .bili-description,.os-display .bili-alert{font-size:22px!important;line-height:1.6;color:#bfccde!important;margin:14px 0}.os-display .bili-alert{background:#3b2730;padding:14px;border-radius:12px;color:#ffd1df!important}.os-display .bili-alert button{display:block;margin-top:12px}.os-display .bili-alert[hidden]{display:none}.os-display .bili-app form{display:flex;gap:10px;margin:20px 0}.os-display .bili-app input{font:inherit;min-width:0;width:100%;font-size:26px;height:64px;border-radius:14px;background:#202a3c;color:#fff;padding:14px;border:2px solid #5c6d85}.os-display .bili-app form button{min-width:88px}
+.os-display .bili-detail-art{height:206px;border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:linear-gradient(135deg,#6d365a,#202942);margin:16px 0}.os-display .bili-detail-art span{font-size:60px}.os-display .bili-detail-art small{font-size:18px;letter-spacing:2px}.os-display .bili-title{font-size:32px!important;line-height:1.45;color:#fff!important;margin:18px 0 8px}.os-display .bili-author{font-size:22px;color:#aebed5!important;margin:10px 0}.os-display .bili-description{font-size:24px!important}
+.os-display .bili-video-stage{width:100%;aspect-ratio:16/9;background:#000;border-radius:16px;position:relative;overflow:hidden;margin:12px 0}.os-display .bili-media-mount,.os-display .bili-media-mount video,.os-display .bili-media-mount iframe{width:100%;height:100%;display:block;border:0}.os-display .bili-media-mount video{object-fit:contain}.os-display .bili-media-mount video.bili-mirrored{transform:scaleX(-1)}.os-display .bili-video-badge{position:absolute;top:10px;left:10px;background:#111b;color:#fff;font-size:14px;padding:4px 7px;pointer-events:none}.os-display .bili-captions{position:absolute;bottom:18px;left:14px;right:14px;color:#fff!important;font-size:24px;line-height:1.4;text-align:center;text-shadow:0 1px 4px #000;background:#000a;border-radius:6px;padding:5px 8px;pointer-events:none}.os-display .bili-captions[hidden]{display:none}.os-display .bili-progress{display:flex;justify-content:space-between;font-size:20px;color:#b7c6dc;margin:10px 0}.os-display .bili-controls button{min-height:62px;font-size:25px}.os-display .bili-controls.secondary button{font-size:23px}.os-display .bili-player-title{font-size:27px!important;line-height:1.4;color:#fff!important;margin:18px 0 10px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.os-display .bili-help{font-size:18px!important;line-height:1.5;color:#91a4bf!important;margin:10px 0}
+.os-display .bili-scrim{position:absolute;inset:0;background:#050914bb;z-index:8;display:flex;align-items:flex-end;padding:16px}.os-display .bili-sheet{padding:24px;background:#1b2435!important;width:100%;max-height:100%;overflow-y:auto;border:1px solid #50617a;border-radius:24px;color:#fff!important}.os-display .bili-sheet h2{font-size:30px!important;color:#fff!important;margin:0 0 18px}.os-display .bili-sheet-items{display:flex;flex-direction:column;gap:12px}.os-display .bili-sheet button,.os-display .bili-sheet a{width:100%;font-size:25px;min-height:62px}.os-display .bili-sheet p{font-size:24px;line-height:1.6;color:#c3d1e6!important;margin:8px 0}.os-display .bili-connect-card,.os-display .bili-cache-card{background:#1c2639;padding:20px;border-radius:16px;margin:16px 0}.os-display .bili-connect-card h2,.os-display .bili-cache-card h2{font-size:27px!important;color:#fff!important;margin:0 0 12px}.os-display .bili-connect-card p,.os-display .bili-cache-card p{font-size:23px;line-height:1.6;color:#bdcbe0!important}.os-display .bili-cache-card .bili-actions{grid-template-columns:1fr 1fr}.os-display .bili-app [inert]{pointer-events:none}
+
+.os-display .bili-discovery-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.os-display .bili-discovery-nav button{min-height:68px}
+.os-display .bili-topics button,.os-display .bili-connect-card button{justify-content:flex-start}
+.os-display .bili-app .bili-import{display:grid;gap:16px}
+.os-display .bili-import label{display:grid;gap:7px;font-size:23px}
+.os-display .bili-import select{font:inherit;border-radius:12px;padding:12px;color:#fff;background:#202a3c}
+.os-display .bili-qr{display:block;width:min(240px,100%);aspect-ratio:1;margin:auto;background:white}
+.os-display .bili-import textarea{box-sizing:border-box;width:100%;resize:vertical;padding:12px;border:1px solid #617089;border-radius:12px;background:#202a3c;color:#fff;font:inherit}
+.os-display .bili-progress{display:grid;grid-template-columns:auto minmax(42px,1fr) auto;gap:14px;align-items:center;font-variant-numeric:tabular-nums}
+.os-display .bili-progress progress{width:100%;height:9px;accent-color:#ff91b7}
+.os-display .bili-play-status{color:#f2c5db;font-size:18px;margin:3px 0}
+.os-display .bili-play-status:empty{display:none}
+
+.os-display .bili-watching .bili-body{padding:20px 24px}
+.os-display .bili-watch-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:16px;margin-bottom:14px}
+.os-display .bili-watch-heading h1{margin:0;font-size:27px!important;line-height:1.3;color:#f3f5fa!important;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.os-display .bili-watch-heading p{margin:5px 0 0;font-size:17px;color:#b7c6dc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.os-display .bili-watch-heading button{font-size:20px;min-height:48px}
+.os-display .bili-watching .bili-video-stage{margin:0 0 12px}
+.os-display .bili-app button.bili-timeline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;width:100%;min-height:48px;font-size:18px;font-variant-numeric:tabular-nums}
+.os-display .bili-timeline progress{width:100%;height:8px;accent-color:#ff91b7}
+.os-display .bili-watching .bili-controls{margin:10px 0 0}
+.os-display .bili-watching .bili-controls.secondary{grid-template-columns:repeat(2,minmax(0,1fr))}
+.os-display .bili-watching [data-bili-id="toggle"]:not(:focus):not(.device-focus){background:#623952!important;border-color:#b57898!important}
+.os-display .bili-watch-meta{display:flex;justify-content:space-between;gap:12px;margin:10px 0 0;font-size:17px;color:#b7c6dc}
+.os-display .bili-watching .bili-play-status{position:absolute;inset:12px auto auto 12px;margin:0;padding:5px 9px;border-radius:8px;background:#10141de8;color:#fff;pointer-events:none}
+.os-display .bili-watching .bili-captions{white-space:pre-line;overflow-wrap:anywhere}
+.os-display .bili-watching .bili-controls.with-danmaku{grid-template-columns:repeat(3,minmax(0,1fr))}
+.os-display .bili-watching .bili-controls.with-danmaku button{padding-inline:8px}
+.os-display .bili-danmaku-item{display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;font-size:21px;line-height:1.4;padding:14px;border:2px solid #50617a;border-radius:12px;overflow-wrap:anywhere}
+.os-display .bili-danmaku-item time{color:#f2c5db;font-variant-numeric:tabular-nums}
+
+.os-display .bili-app .bili-icon-button svg,.os-display .bili-up-next svg{width:26px;height:26px;flex:none}
+.os-display .bili-app .bili-icon-button{gap:8px}
+.os-display .bili-discovery-nav{grid-template-columns:repeat(4,minmax(0,1fr))}
+.os-display .bili-discovery-nav .bili-icon-button{flex-direction:column;font-size:17px;padding:9px 5px;gap:5px}
+.os-display .bili-transport{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 0}
+.os-display .bili-transport .bili-icon-button{position:relative;flex:1;min-width:0;min-height:56px;padding:6px;background:#252e41!important}
+.os-display .bili-transport [data-bili-id="toggle"]{flex:1.45}
+.os-display .bili-transport [data-bili-id="toggle"] svg{width:34px;height:34px}
+.os-display .bili-transport [data-bili-id="rewind"] span,.os-display .bili-transport [data-bili-id="forward"] span{position:absolute;inset:0;display:grid;place-items:center;font-size:10px;padding-top:4px;pointer-events:none}
+.os-display .bili-watch-actions{display:flex;gap:8px}
+.os-display .bili-watch-actions button{flex:1;min-height:46px;font-size:17px;padding:6px 8px}
+.os-display .bili-app .bili-up-next{display:grid;grid-template-columns:26px minmax(0,1fr);gap:12px;align-items:center;text-align:left;width:100%;margin-top:10px;padding:10px 14px}
+.os-display .bili-up-next small{display:block;font-size:14px;color:#f1a8c1}
+.os-display .bili-up-next strong{display:block;font-size:17px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.os-display #bili-danmaku-overlay{position:absolute;top:12%;left:6%;right:6%;white-space:pre-line;overflow-wrap:anywhere;text-align:right;font-size:19px;line-height:1.35;color:#fff;text-shadow:0 1px 5px #000,1px 1px #000;pointer-events:none}
+
+.os-display #bili-progress-bar{position:absolute;inset:auto 0 0;width:100%;height:5px;border:0;appearance:none;background:#ffffff30;pointer-events:none}
+.os-display #bili-progress-bar::-webkit-progress-bar{background:#ffffff30}
+.os-display #bili-progress-bar::-webkit-progress-value{background:#fb7299}
+.os-display #bili-progress-bar::-moz-progress-bar{background:#fb7299}
+.os-display .bili-app .bili-up-next{grid-template-columns:104px minmax(0,1fr)}
+.os-display .bili-next-cover{position:relative;display:grid;place-items:center;aspect-ratio:16/9;overflow:hidden;border-radius:7px;background:#384157}
+.os-display .bili-next-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.os-display .bili-next-cover svg{position:relative;padding:4px;border-radius:50%;background:#10141dc9}
+.os-display .bili-app.bili-immersive{height:100%;background:#07090d}
+.os-display .bili-immersive .bili-body{display:flex;flex-direction:column;justify-content:center;padding:0;overflow:hidden}
+.os-display .bili-immersive .bili-video-stage{border-radius:0;margin:0}
+.os-display .bili-immersive .bili-transport{margin:10px 16px}
+.os-display .bili-immersive :is(.bili-watch-heading,.bili-watch-actions,.bili-up-next,.bili-watch-meta){display:none}
+
+.os-display .bili-section-bar{
+  position:sticky;top:-20px;z-index:3;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;
+  padding:8px 1px 12px;background:#10141d;
+}
+.os-display .bili-section-bar .bili-icon-button{flex-direction:column;gap:4px;min-height:63px;padding:7px 3px;font-size:16px}
+.os-display .bili-section-bar [aria-current="page"]{background:#493048!important;color:#ffd2e4!important}
+.os-display .bili-library-heading{margin:10px 0 16px}
+.os-display .bili-library-heading h1{font-size:31px;line-height:1.25;margin:0;color:#f3f5fa!important}
+.os-display .bili-library-heading p{font-size:18px;margin:6px 0;color:#b7c6dc}
+.os-display .bili-app .bili-video-card{
+  display:grid;grid-template-columns:168px minmax(0,1fr);gap:15px;align-items:center;
+  width:100%;text-align:left;padding:9px;min-height:112px;scroll-margin-top:86px;
+}
+.os-display .bili-cover{
+  display:grid;place-items:center;position:relative;aspect-ratio:16/9;
+  overflow:hidden;border-radius:10px;background:#313b50;color:#b7c6dc;
+}
+.os-display .bili-cover svg,.os-display .bili-account-row svg,.os-display .bili-episode-card>svg{width:26px;height:26px}
+.os-display .bili-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.os-display .bili-cover small{position:absolute;right:5px;bottom:5px;z-index:1;padding:2px 5px;border-radius:4px;background:#080c15df;color:#fff;font-size:14px}
+.os-display .bili-video-card .bili-card-copy strong{font-size:21px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.os-display .bili-video-card .bili-card-copy :is(small,em){font-size:16px;line-height:1.25;font-style:normal;color:#b7c6dc}
+.os-display .bili-video-card .bili-card-copy em{color:#f4a7c3}
+.os-display .bili-account-list{display:grid;gap:9px;margin:10px 0 18px}
+.os-display .bili-app .bili-account-row,.os-display .bili-app .bili-episode-card{
+  display:grid;grid-template-columns:26px minmax(0,1fr);justify-items:start;gap:14px;
+  min-height:67px;width:100%;text-align:left;padding:9px 13px;
+}
+.os-display .bili-account-row strong,.os-display .bili-episode-copy strong{display:block;font-size:20px;line-height:1.25}
+.os-display .bili-account-row small,.os-display .bili-episode-copy small{display:block;font-size:15px;line-height:1.25;color:#bac7de;margin-top:4px}
+.os-display .bili-section-title{font-size:21px;color:#dce4f2;margin:20px 0 8px}
+.os-display .bili-app .bili-episode-card{grid-template-columns:108px minmax(0,1fr) 26px}
+.os-display .bili-episode-card .bili-cover{width:100%}
+.os-display .bili-episode-copy{min-width:0}
+.os-display .bili-episode-copy strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.os-display .bili-episode-copy small{margin:0 0 4px;color:#ffc5dc}
+
+.os-display .bili-browsing{height:100%;background:#000;border-radius:0}
+.os-display .bili-browsing .bili-body{
+  display:flex;flex-direction:column;gap:8px;min-height:0;
+  padding:0;overflow:hidden;
+}
+.os-display .bili-browsing .bili-section-bar{
+  position:static;flex:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:4px;height:48px;padding:4px;border:1px solid #ffffff17;border-radius:999px;background:#1c1e25;
+}
+.os-display .bili-browsing .bili-section-bar button{
+  min-height:0;height:38px;padding:0 5px;border:0!important;border-radius:999px;
+  background:transparent!important;font-size:17px;color:#a4a7b0!important;white-space:nowrap;
+}
+.os-display .bili-browsing .bili-section-bar [aria-current="page"]{background:#ffffff19!important;color:#e6e6e6!important}
+.os-display .bili-browsing .bili-section-bar :is(button:focus,button.device-focus){
+  outline:none!important;background:#fb7299!important;color:#17090e!important;box-shadow:0 0 18px #fb729970!important;
+}
+.os-display .bili-browse-scroll{
+  flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
+  scrollbar-width:thin;padding:3px 4px 12px;scroll-padding-block:3px 8px;
+}
+.os-display .bili-browsing .bili-video-list{gap:10px;margin:0 0 10px}
+.os-display .bili-browsing .bili-video-card{
+  grid-template-columns:min(168px,38%) minmax(0,1fr);gap:14px;padding:10px;
+  min-height:0;border-radius:24px;border:1px solid #ffffff17!important;background:#1c1e25!important;scroll-margin-top:0;
+}
+.os-display .bili-browsing .bili-video-card:is(:focus,.device-focus){
+  outline:0!important;background:#2e303a!important;box-shadow:0 0 0 3px #fb7299,0 0 18px #fb72995e!important;
+}
+.os-display .bili-browsing .bili-video-card .bili-card-copy{gap:5px}
+.os-display .bili-browsing .bili-video-card .bili-card-copy strong{font-size:17px;color:#e6e6e6}
+.os-display .bili-browsing .bili-video-card .bili-card-copy small{font-size:14px;color:#a4a7b0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.os-display .bili-card-badges{display:flex;flex-wrap:wrap;gap:6px}
+.os-display .bili-browsing .bili-card-badges em{font-size:12px;padding:2px 8px;border-radius:999px;color:#fb7299;background:#fb729929}
+.os-display .bili-cover-parts{position:absolute;z-index:1;top:6px;left:6px;padding:2px 6px;border-radius:6px;background:#000c;color:#62c6f1;font-size:11px}
+.os-display .bili-cover-progress{position:absolute;z-index:1;inset:auto 0 0;height:4px;background:#ffffff38}
+.os-display .bili-cover-progress i{display:block;height:100%;background:#fb7299}
+.os-display .bili-home-notice{padding:10px 14px;border:1px solid #23ade538;border-radius:16px;background:#23ade51a;color:#a4a7b0!important;font-size:14px!important;margin:0 0 10px}
+.os-display .bili-feed-label{display:flex;justify-content:space-between;margin:10px 4px 8px;color:#a4a7b0!important;font-size:15px!important;font-weight:500}
+.os-display .bili-browse-hints{display:flex;align-items:center;gap:12px;flex:none;min-height:32px;font-size:14px;color:#a4a7b0}
+.os-display .bili-browse-hints kbd{font:inherit;font-size:12px;border:1px solid #ffffff29;border-radius:5px;padding:3px 5px;margin-right:3px}
+.os-display>.os-page-surface:has(>.bili-browsing){height:100%;min-height:0}
+.os-display .bili-browsing .bili-section-bar{margin:0!important}

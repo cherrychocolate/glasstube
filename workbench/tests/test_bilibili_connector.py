@@ -48,6 +48,21 @@ class ConnectorTests(unittest.TestCase):
       {**portrait,'dimension':{}}):
    self.assertFalse(b.portrait_short(invalid))
 
+ def test_playback_failure_distinguishes_missing_video_and_rate_limit(self):
+  missing = b.upstream_error(-404)
+  limited = b.upstream_error(429,'45')
+  self.assertEqual((missing.status,missing.reason),(404,'not-found'))
+  self.assertEqual((limited.status,limited.response()['retryAfter']),(429,45))
+  self.assertEqual(b.upstream_error(412).reason,'upstream-restricted')
+
+ def test_playback_does_not_request_mp4_after_explicit_restriction(self):
+  with patch.object(b,'part_params',return_value={'bvid':'BV1xx411c7mD','cid':1}):
+   with patch.object(b,'_request',side_effect=b.upstream_error(412)) as request:
+    with self.assertRaises(b.BiliUnavailable) as caught:
+     b.playback({})
+   self.assertEqual(caught.exception.reason,'upstream-restricted')
+   request.assert_called_once()
+
  def test_empty_search_is_rejected(self):
   with self.assertRaises(ValueError):b.route('/api/bilibili/search',{'q':['  ']})
  def test_unknown_route_rejected(self):

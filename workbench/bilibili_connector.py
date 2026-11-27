@@ -5,7 +5,30 @@ from concurrent.futures import ThreadPoolExecutor
 import xml.etree.ElementTree as ET
 import bilibili_session
 _CACHE={};_LOCK=threading.Lock()
-class BiliUnavailable(Exception):pass
+class BiliUnavailable(Exception):
+ def __init__(self, message, reason='upstream-unavailable', status=502, retry_after=None):
+  super().__init__(message)
+  self.reason = reason
+  self.status = status
+  self.retry_after = retry_after
+
+ def response(self):
+  body = {'error':str(self),'reason':self.reason}
+  if self.retry_after is not None:
+   body['retryAfter'] = self.retry_after
+  return body
+
+
+def upstream_error(code, retry_after=None):
+ if code in (429,-799,-509):
+  delay = int(retry_after) if isinstance(retry_after,str) and re.fullmatch(r'[0-9]{1,5}',retry_after) else 30
+  return BiliUnavailable('B 站请求过于频繁，请稍后重试。','rate-limited',429,delay)
+ if code in (412,-412,-352,403,-403):
+  return BiliUnavailable('B 站拒绝了当前请求，请稍后再试。','upstream-restricted')
+ if code in (404,-404,62002,62004,62012):
+  return BiliUnavailable('该视频或分集暂不可用。','not-found',404)
+ return BiliUnavailable('B 站接口暂不可用，请稍后重试。')
+
 def _request(resource,params):
  fresh = resource in ('x/web-interface/popular','x/web-interface/newlist')
  key=(resource,urllib.parse.urlencode(params))
@@ -15,8 +38,14 @@ def _request(resource,params):
  req=urllib.request.Request('https://api.bilibili.com/'+resource+'?'+key[1],headers={'User-Agent':'Mozilla/5.0','Referer':'https://www.bilibili.com/','Accept':'application/json'})
  try:
   with urllib.request.urlopen(req,timeout=6) as response:d=json.loads(response.read(3_000_000))
- except Exception as exc:raise BiliUnavailable('游客接口暂不可用，请稍后重试。') from exc
- if d.get('code')!=0:raise BiliUnavailable('B站游客接口限制了本次读取（代码 '+str(d.get('code'))+'），未尝试绕过验证。')
+ except urllib.error.HTTPError as exc:
+  raise upstream_error(exc.code,exc.headers.get('Retry-After') if exc.headers else None) from exc
+ except (OSError,ValueError) as exc:
+  raise BiliUnavailable('B 站接口连接失败，请稍后重试。') from exc
+ if not isinstance(d,dict):
+  raise BiliUnavailable('B 站接口返回格式异常，请稍后重试。')
+ if d.get('code')!=0:
+  raise upstream_error(d.get('code'))
  if not fresh:
   with _LOCK:_CACHE[key]=(time.monotonic(),d['data'])
  return d['data']
@@ -356,7 +385,7 @@ def part_params(query):
  parts = _request('x/player/pagelist', {'bvid': ident})
  part = next((p for p in parts if str(p.get('page')) == page), None)
  if not part or not isinstance(part.get('cid'), int):
-  raise BiliUnavailable('此分集暂时无法读取。')
+  raise BiliUnavailable('该视频或分集暂不可用。','not-found',404)
  return {'bvid': ident, 'cid': part['cid']}
 
 def danmaku(query):
@@ -418,15 +447,18 @@ def playback(query):
  if query.get('format') != ['mp4']:
   try:
    manifest = dash_manifest(_request('x/player/playurl', {**params, 'qn': 16, 'fnval': 16}))
-  except (BiliUnavailable, ValueError, TypeError):
+  except BiliUnavailable as error:
+   if error.reason in ('not-found','upstream-restricted','rate-limited'):
+    raise
+  except (ValueError, TypeError):
    pass
  if manifest:
   source = {'manifest':manifest}
  else:
   info = _request('x/player/playurl', {**params, 'qn': 16, 'fnval': 1, 'platform': 'html5'})
   videos = info.get('durl') or []
-  if len(videos) != 1 or 'mp4' not in str(info.get('format', '')).lower():
-   raise BiliUnavailable('此稿件暂未提供可直接播放的公开媒体。')
+  if info.get('is_preview') or info.get('is_drm') or len(videos) != 1 or 'mp4' not in str(info.get('format', '')).lower():
+   raise BiliUnavailable('此视频暂无可直接播放的公开媒体。','no-stream')
   source = {'src':media_url(videos[0].get('url','')), 'quality':info.get('quality')}
  captions = []
  try:

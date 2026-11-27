@@ -46,7 +46,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send({'error': '账号授权未启用'}, 403)
             return self.send(connector.route(url.path, query))
         except connector.BiliUnavailable as error:
-            return self.send({'error': str(error)}, 502)
+            return self.send(error.response(), error.status)
         except ValueError as error:
             return self.send({'error': str(error)}, 400)
 

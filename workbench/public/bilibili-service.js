@@ -73,7 +73,7 @@ function draw(defaultID){
 function go(route, render = true, origin){if(shortRoute()&&route!=='shorts'){clearTimeout(shortsNavTimer);shortToast('');shortToast('','intro');endShortGesture();if(media?.tagName==='VIDEO')saveProgress(media,selected().id,1);}if(state.route==='search'){const {query,mode,items,error,notice}=state;searchSession={query,mode,items,error,notice};lastSearchResult=searchResult;lastSearchFilter=searchFilter;}generation++;state.busy=false;remember();stack.push({focus:origin||focusMemory.get(scope()),route:state.route,selected:state.selected,part:state.part,items:state.items,query:state.query,mode:state.mode,offline:state.offline,viewTitle,stream,searchResult,searchFilter,folders:state.folders,error:state.error,notice:state.notice});state.route=route;state.panel='';state.error='';state.notice='';if(route!=='player')media?.pause?.();if(render)draw();}
 function back(){if(!active())return false;if(shortRoute())return shortBack();if(immersive&&!state.panel){setImmersive(false);return true;}if(state.panel){if(state.panel==='danmaku'){state.panel='danmaku-options';draw('danmaku');return true}if(state.panel==='login')stopPoll();if(state.panel==='library-tools'){state.panel='';draw('library-tools');return true;}if(state.panel==='danmaku-options'){state.panel='settings';draw('danmaku-options');return true;}state.panel='';draw(focusMemory.get(scope())||'settings');return true}if(stack.length){if(state.route==='player'&&!state.busy&&media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);generation++;state.busy=false;remember();media?.pause?.();const {focus:origin,searchResult:previousSearch,searchFilter:previousFilter,...previous}=stack.pop();Object.assign(state,previous);viewTitle=previous.viewTitle;stream=previous.stream;searchResult=previousSearch;searchFilter=previousFilter;draw(origin);return true}osNavigate('center');return true}
 function showPanel(panel, initialFocus){remember();state.panel=panel;draw(initialFocus)}
-async function request(path,post=false){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),9500);try{const r=await fetch('/api/bilibili/'+path,{signal:controller.signal,cache:'no-store',...(post?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{})});const d=await r.json();if(!r.ok)throw Error(d.error||'读取失败');return d}finally{clearTimeout(timer)}}
+async function request(path,post=false){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),9500);try{const r=await fetch('/api/bilibili/'+path,{signal:controller.signal,cache:'no-store',...(post?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{})});const d=await r.json();if(!r.ok)throw Object.assign(Error(d.error||'读取失败'),{reason:d.reason,retryAfter:d.retryAfter});return d}finally{clearTimeout(timer)}}
 async function loadSearch() {
   const gen = ++generation;
   state.mode='live';
@@ -333,7 +333,9 @@ function shortsView() {
       <button class="bili-short-stage" data-bili-id="short-stage" data-focus-default type="button"
         aria-label="显示短视频操作" aria-controls="bili-short-menu" aria-expanded="${!!shorts.menu}"></button>
       <p class="bili-short-status" id="bili-play-status" role="status">${state.busy?'正在加载…':failure?H(state.notice):''}</p>
-      ${failure?button('short-retry','重试播放','class="bili-short-retry"'):''}
+      ${failure?['not-found','no-stream'].includes(state.playError)
+        ?button('short-skip','下一条','class="bili-short-retry"')
+        :button('short-retry','重试播放','class="bili-short-retry"'):''}
       ${!video?button('short-reload','加载短视频','class="bili-short-retry"'):''}
       ${video?`<div class="bili-short-info"><strong>${H(video.author)}</strong><h1>${H(video.title)}</h1>
         <progress id="bili-progress-bar" max="1" value="0" aria-label="播放进度"></progress></div>`:''}
@@ -438,6 +440,7 @@ document.addEventListener('keyup',event=>{
 
 let autoStart = false;
 let immersive = false;
+let playbackCooldownUntil = 0;
 async function watchVideo(preferMp4 = false, autoplay = false) {
   if (!playingRoute()) go('player',false);
   else remember();
@@ -445,18 +448,39 @@ async function watchVideo(preferMp4 = false, autoplay = false) {
   state.notice = '';
   if (playingRoute() && selected().mode!=='demo') release();
   stream = null;
+  state.playError = '';
   if (selected().mode === 'demo') { draw('toggle'); return; }
   const gen = ++generation;
   state.busy = true;
   draw();
   try {
-    const result = await request('play?id='+encodeURIComponent(selected().id)+'&page='+state.part+((preferMp4 || !window.dashjs || !window.MediaSource)?'&format=mp4':''));
+    const path='play?id='+encodeURIComponent(selected().id)+'&page='+state.part+
+      ((preferMp4||!window.dashjs||!window.MediaSource)?'&format=mp4':'');
+    const cooldown=Math.ceil((playbackCooldownUntil-Date.now())/1000);
+    if(cooldown>0) throw Object.assign(Error('B 站请求过于频繁，请在 '+cooldown+' 秒后重试。'),{reason:'rate-limited'});
+    let result;
+    try {
+      result=await request(path);
+    } catch(error) {
+      if(error.reason!=='upstream-unavailable'||gen!==generation)throw error;
+      await new Promise(resolve=>setTimeout(resolve,650));
+      if(gen!==generation)return;
+      result=await request(path);
+    }
     if (gen === generation) {
       stream = result;
       discovery.remember(selected());
     }
   } catch (error) {
-    if (gen === generation) state.notice = '暂时无法加载播放源，请重试。';
+    if (gen === generation) {
+      state.playError=error.reason||'';
+      if(error.reason==='rate-limited'&&Number.isFinite(error.retryAfter)){
+        playbackCooldownUntil=Date.now()+error.retryAfter*1000;
+        state.notice='B 站请求过于频繁，请在 '+error.retryAfter+' 秒后重试。';
+      } else if(['not-found','no-stream'].includes(error.reason)&&shortRoute()){
+        state.notice='这条视频暂不可用，可以切换到下一条。';
+      } else state.notice=error.reason?error.message:'暂时无法加载播放源，请重试。';
+    }
   } finally {
     if (gen === generation) {
       state.busy = false;
@@ -1155,7 +1179,8 @@ window.addEventListener('pagehide',()=>{
 function release(){clearOverlay();if(dashPlayer){const previous=dashPlayer;dashPlayer=null;previous.reset()}media?.pause?.();if(mediaURL)URL.revokeObjectURL(mediaURL);mediaURL='';media=null;mediaID=''}
 function applySettings(){if(!media||media.tagName!=='VIDEO')return;media.playbackRate=state.rate;media.classList.toggle('bili-mirrored',state.mirror);for(const track of media.textTracks)track.mode='hidden';updateMedia()}
 function updateMedia(){if(!active()||!playingRoute()||state.busy||!media||media.tagName!=='VIDEO')return;const t=media.currentTime||0;const bar=document.querySelector('#bili-progress-bar');if(bar)bar.value=Number.isFinite(media.duration)&&media.duration>0?t/media.duration:0;const timer=document.querySelector('#bili-time');if(timer)timer.textContent=time(t)+' / '+time(media.duration||selected().duration||30);const play=document.querySelector('[data-bili-id="toggle"]');if(play&&play.dataset.paused!==String(media.paused)){play.dataset.paused=String(media.paused);play.innerHTML=icon(media.paused?'play':'pause');play.title=media.paused?'播放':'暂停'}updateOverlay();const caps=document.querySelector('#bili-captions');if(caps){const cues=['本地交互样片 · 非 B 站视频','镜像仅反转画面，字幕保持可读','方向键移焦 · 确认执行 · 返回退出','倍速、字幕与离线可在本地验证'];const caption=stream?stream.captionCues.find(c=>c.from<=t&&c.to>t)?.text:cues[t<7?0:t<15?1:t<23?2:3];caps.textContent=state.subtitle?(caption||''):'';caps.hidden=!caps.textContent}if(Date.now()-lastSave>1500){lastSave=Date.now();saveProgress(media,selected().id,state.part)}}
-async function mountMedia(){const mount=document.querySelector('.bili-media-mount');if(!mount||state.busy)return;const v=selected();if(v.mode!=='demo'&&!stream)return;const id=v.id+':'+state.part+':'+state.offline+':'+(stream?.manifest||stream?.src||'');if(mediaID!==id){release();mediaID=id;media=document.createElement('video');media.playsInline=true;media.loop=shortRoute();media.preload='metadata';media.setAttribute('aria-label',stream?'B 站视频画面':'本地交互样片画面');media.tabIndex=-1;const expected=id;if(state.offline){try{const item=await transaction('readonly',s=>s.get(v.id));if(mediaID!==expected)return;if(!item?.blob?.size)throw Error('缓存文件不存在，请重新保存');mediaURL=URL.createObjectURL(item.blob);media.src=mediaURL}catch(e){const el=document.querySelector('#bili-media-error');if(el){el.hidden=false;el.textContent=e.message}return}}else if(!stream?.manifest)media.src=stream?.src||DEMO;media.volume=(osData?.settings?.volume??60)/100;const video=media, partAtMount=state.part;media.onended=()=>saveProgress(video,v.id,partAtMount);media.onloadedmetadata=()=>{
+async function mountMedia(){const mount=document.querySelector('.bili-media-mount');if(!mount||state.busy||(shortRoute()&&(!currentShort()||!stream)))return;const v=selected();if(v.mode!=='demo'&&!stream)return;const id=v.id+':'+state.part+':'+state.offline+':'+(stream?.manifest||stream?.src||'');if(mediaID!==id){release();mediaID=id;media=document.createElement('video');media.playsInline=true;media.loop=shortRoute();media.preload='metadata';media.setAttribute('aria-label',stream?'B 站视频画面':'本地交互样片画面');media.tabIndex=-1;const expected=id;if(state.offline){try{const item=await transaction('readonly',s=>s.get(v.id));if(mediaID!==expected)return;if(!item?.blob?.size)throw Error('缓存文件不存在，请重新保存');mediaURL=URL.createObjectURL(item.blob);media.src=mediaURL}catch(e){const el=document.querySelector('#bili-media-error');if(el){el.hidden=false;el.textContent=e.message}return}}else if(!stream?.manifest)media.src=stream?.src||DEMO;media.volume=(osData?.settings?.volume??60)/100;const video=media, partAtMount=state.part;media.onended=()=>saveProgress(video,v.id,partAtMount);media.onloadedmetadata=()=>{
+ if(media!==video||!playingRoute())return;
  if(shortRoute()&&video.videoWidth>=video.videoHeight){
   release();stream=null;state.notice='此视频的实际画面不符合竖屏条件。';
   draw('short-stage');void moveShort(1);return;
@@ -1268,7 +1293,7 @@ const click=osClick;osClick=async function(e){const b=e.target.closest('[data-bi
   if(media?.paused)media.play().catch(()=>{});
   return shortMenu(true);
  }
- if(id==='short-prev'||id==='short-next')return moveShort(id==='short-next'?1:-1);
+ if(id==='short-prev'||id==='short-next'||id==='short-skip')return moveShort(id==='short-prev'?-1:1);
  if(id==='short-retry')return watchVideo(false,true);
  if(id==='short-reload')return moveShort(1);
  const reaction=shortActions.find(action=>action[0]===id);

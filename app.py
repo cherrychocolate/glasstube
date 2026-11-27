@@ -48,7 +48,7 @@ def bilibili(endpoint):
     try:
         result = connector.route('/api/bilibili/' + endpoint, request.args.to_dict(flat=False))
     except connector.BiliUnavailable as error:
-        return jsonify(error=str(error)), 502
+        return jsonify(error.response()), error.status
     except ValueError as error:
         return jsonify(error=str(error)), 400
     response = jsonify(result)

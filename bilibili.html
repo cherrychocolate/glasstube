@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="data:,">
+<title>GlassBili · 哔哩哔哩眼镜版</title>
+<!--
+  GlassBili — 参考 Karpathy HackerTube 思路重建的 Bilibili 600×800 眼镜端
+  数据源：B站官方「入站必刷」殿堂级精选（39 部真实 BV 视频），无登录本地兴趣推荐。
+  交互规范（Meta Ray-Ban Display + Android XR Glimmer）：
+    · ↑↓←→（滑动）按几何位置移动焦点；货架 & Tab 栏记忆
+    · Enter（捏合）激活；长按 Enter / M 打开上下文菜单（支持一键三连）
+    · Esc / Backspace / 系统返回 逐层退出（历史栈 ≤ 5）
+    · B 键切换“透视叠加”模拟（mix-blend-mode: screen 模拟加色光学）
+-->
+<style>
+  :root{
+    --bg:#000;                     /* 加色镜片：纯黑 = 透明 */
+    --panel:rgba(30,30,36,.92);
+    --panel-hi:rgba(48,46,56,.96);
+    --line:rgba(255,255,255,.08);
+    --txt:#e6e6e6;                 /* 柔白：避免纯白眩光与漏光 */
+    --sub:#a4a6ae;
+    --dim:#72757e;
+    --acc:#fb7299;                 /* B站粉 */
+    --acc-glow:rgba(251,114,153,.48);
+    --acc-soft:rgba(251,114,153,.18);
+    --cyan:#23ade5;                /* B站蓝 */
+    --cyan-soft:rgba(35,173,229,.18);
+    --r-lg:28px; --r-md:20px; --r-sm:14px;
+    --pad:24px;
+    --ease:cubic-bezier(.2,.8,.2,1);
+    --dur:180ms;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font-family:"PingFang SC","Noto Sans SC","Google Sans",Roboto,"Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;overflow:hidden;-webkit-tap-highlight-color:transparent}
+  button,a{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;text-decoration:none}
+  .f{outline:none}
+  svg{display:block}
+
+  /* ---------- 600 × 800 眼镜视口 ---------- */
+  #app{position:relative;width:min(100vw,600px);height:min(100dvh,800px);margin:0 auto;overflow:hidden;isolation:isolate}
+  @media (min-width:680px) and (min-height:860px){
+    body{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;background:#0b0b0e}
+    #app{margin:0;border-radius:10px;box-shadow:0 0 0 1px #2b2933,0 30px 80px rgba(0,0,0,.65);background:#000}
+    #frameLabel{display:block}
+  }
+  #frameLabel{display:none;color:#62656e;font-size:13px;letter-spacing:.04em}
+  #frameLabel b{color:#fb7299;font-weight:500}
+
+  /* 透视叠加模拟 */
+  #world{position:absolute;inset:0;z-index:0;opacity:0;transition:opacity .4s;
+    background:
+      radial-gradient(120% 60% at 50% 110%, #3d4a2f 0 40%, transparent 41%),
+      radial-gradient(40% 30% at 20% 30%, #f3e6c8 0, transparent 70%),
+      linear-gradient(180deg,#9cc3e6 0%,#d7e6f0 45%,#7c8a6a 46%,#55603f 100%)}
+  #app.pt #world{opacity:1}
+  #app.pt #ui{mix-blend-mode:screen}
+  #ui{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;background:#000}
+
+  /* ---------- 顶栏 ---------- */
+  #top{flex:none;padding:18px var(--pad) 6px;transition:opacity var(--dur)}
+  .tabs{display:flex;gap:5px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:5px}
+  .tab{flex:1;height:46px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;color:var(--sub);transition:background var(--dur),color var(--dur),box-shadow var(--dur),transform var(--dur) var(--ease)}
+  .tab.on{color:var(--txt);background:rgba(255,255,255,.09)}
+  .tab:focus{color:#16080d;background:var(--acc);font-weight:600;box-shadow:0 0 22px var(--acc-glow)}
+  .titlebar{display:flex;align-items:center;gap:12px;height:56px;padding:0 6px}
+  .titlebar .crumb{font-size:15px;color:var(--acc);background:var(--acc-soft);padding:4px 12px;border-radius:999px;flex:none}
+  .titlebar h2{margin:0;font-size:21px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* ---------- 滚动区 ---------- */
+  #view{flex:1;position:relative;min-height:0}
+  .vs{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;padding:6px 0 28px;
+    --ft:0px;--fb:0px;
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--ft),#000 calc(100% - var(--fb)),transparent 100%);
+            mask-image:linear-gradient(to bottom,transparent 0,#000 var(--ft),#000 calc(100% - var(--fb)),transparent 100%)}
+  .vs::-webkit-scrollbar,.track::-webkit-scrollbar{display:none}
+  .vs.ft{--ft:28px}.vs.fb{--fb:44px}
+  .screen-in{animation:screenIn 220ms var(--ease)}
+  @keyframes screenIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+  /* ---------- 横向货架 ---------- */
+  .shelf{margin:4px 0 6px}
+  .shelf h3{margin:10px var(--pad) 0;font-size:17px;font-weight:500;color:var(--sub);display:flex;gap:8px;align-items:baseline}
+  .shelf h3 span{font-size:15px;color:var(--dim)}
+  .track{position:relative;display:flex;gap:16px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;padding:12px var(--pad) 10px;
+    --fl:0px;--fr:0px;
+    -webkit-mask-image:linear-gradient(to right,transparent 0,#000 var(--fl),#000 calc(100% - var(--fr)),transparent 100%);
+            mask-image:linear-gradient(to right,transparent 0,#000 var(--fl),#000 calc(100% - var(--fr)),transparent 100%)}
+  .track.fl{--fl:18px}.track.fr{--fr:40px}
+  .empty{margin:12px var(--pad) 6px;padding:18px 20px;border-radius:var(--r-md);border:1px dashed rgba(255,255,255,.12);color:var(--dim);font-size:16px;line-height:1.5}
+
+  /* ---------- 视频卡片 ---------- */
+  .card{flex:none;width:236px;position:relative}
+  .thumb{position:relative;width:100%;aspect-ratio:16/9;border-radius:var(--r-md);overflow:hidden;
+    background:linear-gradient(135deg,hsl(var(--h) 45% 24%),hsl(calc(var(--h) + 35) 38% 12%));
+    transition:transform var(--dur) var(--ease),box-shadow var(--dur),filter var(--dur);filter:brightness(.65) saturate(.88)}
+  .thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .thumb .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:600;color:rgba(255,255,255,.35)}
+  .dur{position:absolute;right:8px;bottom:8px;font-size:13px;font-variant-numeric:tabular-nums;padding:2px 8px;border-radius:8px;background:rgba(0,0,0,.72);color:#e6e6e6}
+  .card .ct{margin-top:10px;font-size:18px;line-height:1.32;max-height:2.64em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:var(--sub);transition:color var(--dur)}
+  .card .cm{margin-top:4px;font-size:15px;color:var(--dim);display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .up-tag{display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1;padding:2px 4px;border-radius:4px;border:1px solid rgba(255,255,255,.22);color:var(--sub);flex:none}
+  .card:focus .thumb,.row:focus .thumb,.hero:focus .thumb{filter:none;transform:scale(1.04);
+    box-shadow:0 0 0 3px var(--acc),0 0 28px var(--acc-glow)}
+  .card:focus .ct{color:var(--txt)}
+  /* 长按三连/菜单进度条 */
+  .thumb::after{content:"";position:absolute;left:0;bottom:0;height:5px;width:0;background:var(--acc);border-radius:0 3px 3px 0}
+  .pressing .thumb::after{width:100%;transition:width 550ms linear}
+  .pressing .thumb{transform:scale(.98)}
+  .badge{position:absolute;top:8px;right:8px;display:flex;gap:4px}
+  .badge i{display:flex;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.68);align-items:center;justify-content:center}
+  .badge svg{width:15px;height:15px;fill:var(--acc)}
+  .badge i.cy svg{fill:var(--cyan)}
+  .watched{position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.22)}
+  .watched::before{content:"";position:absolute;inset:0;width:100%;background:var(--acc)}
+
+  /* ---------- 列表行 ---------- */
+  .list{padding:4px var(--pad) 0;display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;gap:16px;align-items:center;padding:10px;border-radius:var(--r-lg);transition:background var(--dur),box-shadow var(--dur)}
+  .row .thumb{width:196px;flex:none;border-radius:var(--r-sm)}
+  .row .rt{min-width:0;flex:1}
+  .row .t{font-size:18px;line-height:1.32;max-height:2.64em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:var(--sub)}
+  .row .m{margin-top:6px;font-size:15px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .why{display:inline-block;margin-top:8px;font-size:14px;color:var(--cyan);background:var(--cyan-soft);padding:3px 10px;border-radius:999px}
+  .row:focus{background:var(--panel-hi);box-shadow:0 0 0 1px var(--line)}
+  .row:focus .t{color:var(--txt)}
+  .row:focus .thumb{transform:none;box-shadow:0 0 0 3px var(--acc)}
+
+  /* ---------- Hero ---------- */
+  .hero{display:block;margin:6px var(--pad) 10px;width:calc(100% - 2*var(--pad));position:relative}
+  .hero .thumb{border-radius:var(--r-lg)}
+  .hero .ov{position:absolute;left:0;right:0;bottom:0;padding:48px 22px 18px;border-radius:0 0 var(--r-lg) var(--r-lg);
+    background:linear-gradient(to top,rgba(0,0,0,.92),rgba(0,0,0,0))}
+  .hero .ov .why{font-size:14px;color:var(--acc)}
+  .hero .ov .t{margin-top:6px;font-size:22px;line-height:1.25;font-weight:500}
+  .hero .ov .m{margin-top:4px;font-size:15px;color:var(--sub)}
+  .hero:focus .thumb{transform:scale(1.02)}
+  .section-h{margin:16px var(--pad) 2px;font-size:17px;font-weight:500;color:var(--sub)}
+
+  /* ---------- 分区瓷砖 ---------- */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:10px var(--pad)}
+  .tile{height:132px;border-radius:var(--r-lg);padding:18px;display:flex;flex-direction:column;justify-content:space-between;
+    background:linear-gradient(140deg,hsl(var(--h) 42% 20% / .95),hsl(calc(var(--h) + 28) 32% 10% / .95));border:1px solid var(--line);
+    transition:transform var(--dur) var(--ease),box-shadow var(--dur);filter:brightness(.82)}
+  .tile .g{font-size:30px;line-height:1}
+  .tile .n{font-size:20px;font-weight:500}
+  .tile .c{font-size:15px;color:var(--sub)}
+  .tile:focus{filter:none;transform:scale(1.03);box-shadow:0 0 0 3px var(--acc),0 0 26px var(--acc-glow)}
+
+  /* ---------- 胶囊按钮 ---------- */
+  .chips{display:flex;flex-wrap:wrap;gap:10px;padding:8px var(--pad)}
+  .chip{height:44px;padding:0 18px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:16px;color:var(--sub);display:flex;align-items:center;gap:8px;transition:all var(--dur)}
+  .chip:focus{background:var(--acc);color:#16080d;font-weight:600;box-shadow:0 0 22px var(--acc-glow)}
+  .chip.danger:focus{background:#f28b82}
+
+  /* ---------- 搜索 ---------- */
+  .sbox{margin:8px var(--pad) 4px;position:relative}
+  .sbox input{width:100%;height:58px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--txt);
+    font:inherit;font-size:18px;padding:0 22px 0 54px;transition:box-shadow var(--dur),background var(--dur)}
+  .sbox input::placeholder{color:var(--dim)}
+  .sbox input:focus{box-shadow:0 0 0 3px var(--acc);background:var(--panel-hi)}
+  .sbox svg{position:absolute;left:20px;top:17px;width:24px;height:24px;fill:var(--sub)}
+
+  /* ---------- 播放页 ---------- */
+  .player{position:relative;margin:4px 12px 0;border-radius:var(--r-lg);overflow:hidden;aspect-ratio:16/9;background:#070709;border:1px solid var(--line)}
+  .player iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+  .winfo{margin:12px var(--pad) 0}
+  .winfo h1{margin:0;font-size:21px;line-height:1.3;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .winfo p{margin:6px 0 0;font-size:15px;color:var(--sub);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .winfo .bv{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:var(--dim)}
+  .rail{display:flex;justify-content:space-between;margin:14px var(--pad) 0;padding:10px 10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg)}
+  .rb{width:96px;display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0;border-radius:var(--r-md);transition:background var(--dur)}
+  .rb .ic{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);transition:all var(--dur) var(--ease)}
+  .rb svg{width:24px;height:24px;fill:var(--sub)}
+  .rb span{font-size:14px;color:var(--dim)}
+  .rb.on svg{fill:var(--acc)}
+  .rb.on span{color:var(--acc)}
+  .rb.cy.on svg{fill:var(--cyan)}
+  .rb.cy.on span{color:var(--cyan)}
+  .rb:focus .ic{background:var(--acc);transform:scale(1.08);box-shadow:0 0 24px var(--acc-glow)}
+  .rb:focus svg{fill:#16080d}
+  .rb:focus span{color:var(--txt)}
+  .blurb{margin:12px var(--pad) 0;font-size:16px;line-height:1.5;color:var(--sub)}
+  .watching .shelf .card{width:200px}
+  .watching .shelf .card .ct{font-size:16px}
+
+  /* 三连动效 */
+  @keyframes triplePop{0%{transform:scale(1)}40%{transform:scale(1.22)}100%{transform:scale(1)}}
+  .triple-pop .ic{animation:triplePop 380ms var(--ease);box-shadow:0 0 32px var(--acc-glow)}
+
+  /* ---------- 底部操作提示 ---------- */
+  #hints{flex:none;height:50px;display:flex;align-items:center;gap:14px;padding:0 var(--pad) 6px;font-size:15px;color:var(--dim)}
+  #hints .h{display:flex;align-items:center;gap:6px;white-space:nowrap}
+  #hints kbd{font:inherit;font-size:13px;min-width:24px;height:24px;padding:0 6px;border-radius:7px;border:1px solid rgba(255,255,255,.15);display:inline-flex;align-items:center;justify-content:center;color:var(--sub)}
+  #clock{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--sub)}
+
+  /* ---------- 上下文菜单 ---------- */
+  #scrim{position:absolute;inset:0;z-index:5;background:rgba(0,0,0,.74);opacity:0;pointer-events:none;transition:opacity var(--dur)}
+  #menu{position:absolute;left:var(--pad);right:var(--pad);bottom:66px;z-index:6;background:var(--panel-hi);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px;
+    transform:translateY(20px);opacity:0;pointer-events:none;transition:transform var(--dur) var(--ease),opacity var(--dur)}
+  #app.menu #scrim{opacity:1;pointer-events:auto}
+  #app.menu #menu{transform:none;opacity:1;pointer-events:auto}
+  #menu .mh{display:flex;gap:14px;align-items:center;padding:4px 6px 12px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  #menu .mh .thumb{width:120px;flex:none;border-radius:12px;filter:none}
+  #menu .mh .t{font-size:16px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .mi{display:flex;align-items:center;gap:14px;width:100%;height:56px;padding:0 16px;border-radius:var(--r-md);font-size:18px;color:var(--sub);transition:background var(--dur),color var(--dur)}
+  .mi svg{width:22px;height:22px;fill:currentColor}
+  .mi:focus{background:var(--acc);color:#16080d;font-weight:600}
+
+  /* ---------- Toast ---------- */
+  #toast{position:absolute;left:50%;top:84px;z-index:8;transform:translate(-50%,-8px);opacity:0;pointer-events:none;
+    background:var(--panel-hi);border:1px solid rgba(251,114,153,.35);color:var(--txt);font-size:16px;padding:10px 18px;border-radius:999px;white-space:nowrap;
+    transition:opacity var(--dur),transform var(--dur) var(--ease)}
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+
+  /* ---------- 边界回弹 ---------- */
+  .bump-left{animation:bl 220ms var(--ease)}.bump-right{animation:br 220ms var(--ease)}
+  .bump-up{animation:bu 220ms var(--ease)}.bump-down{animation:bd 220ms var(--ease)}
+  @keyframes bl{40%{transform:translateX(-7px)}}@keyframes br{40%{transform:translateX(7px)}}
+  @keyframes bu{40%{transform:translateY(-6px)}}@keyframes bd{40%{transform:translateY(6px)}}
+
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="frameLabel"><b>GlassBili · 600 × 800</b> · 方向键移动 · Enter 选择 · 长按 Enter / M 更多 · Esc 返回 · B 透视模拟</div>
+<div id="app">
+  <div id="world" aria-hidden="true"></div>
+  <div id="ui">
+    <header id="top"></header>
+    <main id="view"></main>
+    <footer id="hints"></footer>
+  </div>
+  <div id="scrim"></div>
+  <div id="menu" role="menu" aria-hidden="true"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+const ZONES = {
+  tech:    { name:'科技极客', glyph:'⌬', h:202 },
+  know:    { name:'知识人文', glyph:'◎', h:342 },
+  film:    { name:'影视短片', glyph:'▤', h:270 },
+  game:    { name:'游戏动画', glyph:'◈', h:158 },
+  music:   { name:'音乐演奏', glyph:'♫', h:32  },
+  kichiku: { name:'镇站鬼畜', glyph:'⚡', h:12  },
+};
+
+const V = [
+  {id:'BV1jE41137eu',cid:164144278,k:'tech',c:'稚晖君',d:239,t:'【自制】技术宅UP耗时三个月，自制B站最强小电视！【硬核】',b:'野生技术宅顶尖水平',p:'https://i0.hdslb.com/bfs/archive/e45dcea884e87613b327a5ec34a16ce962309327.jpg@480w_270h_1c.webp'},
+  {id:'BV1ED4y1Y7dc',cid:909766118,k:'tech',c:'影视飓风',d:1129,t:'一位粉丝想看到自己奔跑的样子',b:'见证奇迹发生，感受科技的温暖和力量',p:'https://i0.hdslb.com/bfs/archive/937f11ce1ddf148be74a772fbd1b5a9d32e462c8.jpg@480w_270h_1c.webp'},
+  {id:'BV1cy4y1k7A2',cid:252900431,k:'tech',c:'老师好我叫何同学',d:670,t:'【何同学】80年代的电脑能做什么？苹果麦金塔深度体验',b:'穿越时空，来自1984年的数码浪漫',p:'https://i1.hdslb.com/bfs/archive/81584c757a6b4c71dc93170664745167b175dd72.jpg@480w_270h_1c.webp'},
+  {id:'BV1gF41117fN',cid:1239771771,k:'tech',c:'-LKs-',d:1632,t:'300天4万公里传遍中国，漂流相机终于回来了！',b:'跨越4万公里，极具人文张力的震撼企划',p:'https://i1.hdslb.com/bfs/archive/569ce57b7df5b88f47a7a9293b756eb806ec08c2.jpg@480w_270h_1c.webp'},
+  {id:'BV16X4y1g7wT',cid:323723441,k:'tech',c:'才疏学浅的才浅',d:717,t:'【才浅】15天花20万元用500克黄金敲数万锤纯手工打造三星堆黄金面具',b:'央视新华社点赞，博物馆喊话来上班！',p:'https://i1.hdslb.com/bfs/archive/55ce9a4d1797ec56a0d4ed727f1a279b89ec3664.jpg@480w_270h_1c.webp'},
+  {id:'BV1Nt4y1D7pW',cid:219605972,k:'tech',c:'老师好我叫何同学',d:633,t:'【何同学】我拍了一张600万人的合影...',b:'央视点名称赞，数码男孩的硬核浪漫礼物',p:'https://i2.hdslb.com/bfs/archive/3c1a8b5f76251adffd3a5aa78967bd672a009703.jpg@480w_270h_1c.webp'},
+  {id:'BV16Z4y1H7NG',cid:201618188,k:'tech',c:'特效小哥studio',d:334,t:'相 机 大 战',b:'经费和创意双重爆炸的数码特效大片',p:'https://i0.hdslb.com/bfs/archive/67c3bbae0eec01a1783f35851649724cb4c408bd.jpg@480w_270h_1c.webp'},
+  {id:'BV1tJ411W7hw',cid:137898232,k:'tech',c:'才疏学浅的才浅',d:611,t:'【才浅手工】魔刀千刃制作 究竟什么叫还原？看完你就明白了',b:'原作出品方盖戳认证，对“技术宅”的完美诠释',p:'https://i1.hdslb.com/bfs/archive/a91b6ad4ee58c9b8357167c668f66f8a8df4efba.jpg@480w_270h_1c.webp'},
+
+  {id:'BV1BK411L7DJ',cid:177974677,k:'know',c:'罗翔说刑法',d:608,t:'【罗翔】我们为什么要读书？',b:'引发全站思考，共同探讨读书的意义',p:'https://i2.hdslb.com/bfs/archive/8d38ddb66687f768f851271b84d58b7ceb1a2d0f.jpg@480w_270h_1c.webp'},
+  {id:'BV1ph4y1g75E',cid:1174279662,k:'know',c:'火柴人AlanBecker',d:843,t:'火柴人 VS 数学(Math)',b:'史上最难看懂的数学动画神作',p:'https://i2.hdslb.com/bfs/archive/2191d0f448b0bcbeef08e686acc942698cb69150.jpg@480w_270h_1c.webp'},
+  {id:'BV1MN4y177PB',cid:783037295,k:'know',c:'衣戈猜想',d:688,t:'回村三天，二舅治好了我的精神内耗',b:'全网刷屏！治愈千万人的精神内耗',p:'https://i2.hdslb.com/bfs/archive/349d11af2161fd4d734540df5206c66242b5e975.jpg@480w_270h_1c.webp'},
+  {id:'BV1FE411A7Xd',cid:267307677,k:'know',c:'风羽酱-sdk',d:367,t:'《 这才叫水视频！》 创意短片',b:'科普和视觉结合的顶尖水平',p:'https://i1.hdslb.com/bfs/archive/6eed6f50cc0dff72a51afbcad1c23b63dca31866.jpg@480w_270h_1c.webp'},
+  {id:'BV14U4y1w7fn',cid:423006242,k:'know',c:'莲羊的岩彩学堂',d:775,t:'这才是文化膨胀！！当岩彩画遇上汉服',b:'让冷门技艺火出圈的跨时空之作',p:'https://i0.hdslb.com/bfs/archive/76ddf1a106a562dacd6c40e09cbee0d7a81206fc.jpg@480w_270h_1c.webp'},
+  {id:'BV19E41197Kc',cid:120004475,k:'know',c:'8KRAW',d:1353,t:'【盛世中华】超燃！数百位8KRAW摄影师联合摄制，10分钟带你看绝美祖国',b:'全网播放破亿，献礼新中国成立七十周年',p:'https://i0.hdslb.com/bfs/archive/181ebe27c0f8adde87b5cfc4b5017bf425d66949.jpg@480w_270h_1c.webp'},
+  {id:'BV1qm4y1r7BB',cid:1076555349,k:'know',c:'朵朵花林',d:235,t:'『从头看她』1920-2020，中国女性发型的百年变迁',b:'振聋发聩！民族文化与女性力量的极致表达',p:'https://i0.hdslb.com/bfs/archive/504786e8586b8526f458561cca4fba4db28b0e62.jpg@480w_270h_1c.webp'},
+
+  {id:'BV1zp4y1U7Z5',cid:205896630,k:'film',c:'狂阿弥_',d:984,t:'一个人，造出让40亿人震碎的夜晚！',b:'纪录片讲述代表作，极具人文关怀和视频传达力',p:'https://i1.hdslb.com/bfs/archive/b25efe570ee23f19b470275092005e8d2d88df1b.jpg@480w_270h_1c.webp'},
+  {id:'BV1Rq4y1n7CR',cid:388300505,k:'film',c:'导演小策',d:1546,t:'【广场往事】《妇仇者联盟》：枪在手，跟鹅走！',b:'令人拍案叫绝的搞笑剧情巅峰之作',p:'https://i1.hdslb.com/bfs/archive/ddc23d5da338f22ac608085e4fd5de6de3eeed11.jpg@480w_270h_1c.webp'},
+  {id:'BV1CC4y1a7ee',cid:204105211,k:'film',c:'木鱼水心',d:41979,t:'【木鱼微剧场】《红楼梦》（全集）',b:'吸引无数人入坑《红楼梦》的影视精讲代表作',p:'https://i0.hdslb.com/bfs/archive/d7a15ce7bccdaf3ff0a41e2b2c80feac1f9edc82.jpg@480w_270h_1c.webp'},
+  {id:'BV1w7411P7jJ',cid:154321238,k:'film',c:'浅葱喵asagiinyo',d:1133,t:'受够了，我真的不行了。好想逃。',b:'全网知名脑洞创意短片',p:'https://i0.hdslb.com/bfs/archive/c1e85909cbc9a1f99adc0ffc9890f1ef3a389f86.jpg@480w_270h_1c.webp'},
+  {id:'BV1Jb411W7dH',cid:517786039,k:'film',c:'迪亚瓦尔Diaval',d:343,t:'【七代小丑/踩点/混剪/高燃】欢乐与惊悚的踩点视觉盛宴！',b:'7代小丑的史诗级会面',p:'https://i0.hdslb.com/bfs/archive/d4fc8471e6fe3bcdf1de4df43fabffaad74646b4.jpg@480w_270h_1c.webp'},
+  {id:'BV1mK411V7wY',cid:178337341,k:'film',c:'丿丶龙猫',d:270,t:'龍',b:'剪刀手对成龙大哥的终极致敬',p:'https://i0.hdslb.com/bfs/archive/235c2ad05b9ac03cfa3f2538b06f22a6d0a68384.jpg@480w_270h_1c.webp'},
+
+  {id:'BV1x54y1e7zf',cid:226204073,k:'game',c:'黑神话',d:782,t:'游戏科学新作《黑神话：悟空》13分钟实机演示',b:'24小时破千万点击，重燃国产3A大作希望',p:'https://i1.hdslb.com/bfs/archive/a9c4c95cc2b115d772928a1ece5296a3681ad7be.jpg@480w_270h_1c.webp'},
+  {id:'BV1mi4y1b76M',cid:172799113,k:'game',c:'国家建筑师Cthuwork',d:725,t:'【Minecraft】清明上河图 [灯火阑珊处 人在画中游]',b:'MC建筑品类的巅峰',p:'https://i1.hdslb.com/bfs/archive/ca6936147a919b5612b370351e61188e2ec82aed.jpg@480w_270h_1c.webp'},
+  {id:'BV1Wb411v7WN',cid:79893358,k:'game',c:'老番茄',d:601,t:'【老番茄】史上最骚杀手(第一集)',b:'剧情类游戏视频《史上最骚》系列代表作',p:'https://i0.hdslb.com/bfs/archive/19da21a55fe51d92a3c8d3f9b4ee7467b79257c2.jpg@480w_270h_1c.webp'},
+  {id:'BV1UE411y7Wy',cid:245682070,k:'game',c:'GoldenEggs',d:1669,t:'你被困在2019年10月25日，如何逃出？（多结局互动视频）',b:'互动游戏开发大赛“史上最佳”获奖作品',p:'https://i1.hdslb.com/bfs/archive/61742ce56fbb10ad624768f21b631e139c988cff.jpg@480w_270h_1c.webp'},
+  {id:'BV13X4y1P7z7',cid:359858024,k:'game',c:'赶稿人',d:170,t:'2021届清华美院动画毕设 |《万华镜》',b:'现象级毕设作品，每一帧都是惊艳壁纸',p:'https://i0.hdslb.com/bfs/archive/08e73240aa6e95be022192ec2945f4fd129a822c.jpg@480w_270h_1c.webp'},
+  {id:'BV1Yc411h7uQ',cid:174494635,k:'game',c:'Moouyo默铀',d:585,t:'【60帧定格动画】用高达在5分钟内跳完所有MJ的舞蹈',b:'MJ中国官网转发的定格动画代表作',p:'https://i0.hdslb.com/bfs/archive/8eb9bb5c9cdf7186c85ee17b6d332947ebe9244d.jpg@480w_270h_1c.webp'},
+  {id:'BV1dR4y1F7Aq',cid:553149806,k:'game',c:'钓可尔太曼',d:111,t:'⚡️ 中 国 人 不 蹦 洋 迪 ⚡️',b:'彰显中式美学魅力的国产动画剪辑佳作',p:'https://i0.hdslb.com/bfs/archive/da8b005d428e9a967d7dfb63b34db4727fc3bd69.jpg@480w_270h_1c.webp'},
+
+  {id:'BV1Sx411T7QQ',cid:5337009,k:'music',c:'墨韵Moyun',d:295,t:'【古筝】千本樱——你可见过如此凶残的练习曲',b:'不论何时这个视频永远有人在线',p:'https://i0.hdslb.com/bfs/archive/baae2b4050363c0ab45465b7cf696b8304fdaca8.jpg@480w_270h_1c.webp'},
+  {id:'BV1PK411L7h5',cid:172350916,k:'music',c:'共青团中央',d:299,t:'鼓乐《兰陵王入阵曲》耳机开最大！来听千军万马！！！',b:'勾画出千年战场的震撼国乐作品',p:'https://i2.hdslb.com/bfs/archive/2f64c176864bced7835d375c47c2de700a107f93.jpg@480w_270h_1c.webp'},
+  {id:'BV1JD4y1e7Q4',cid:31829133901,k:'music',c:'BBoxer酋长',d:213,t:'无屏风表演《口技》还原文言文 ！！！',b:'颜艺派口技的极致表演，传统技艺神还原',p:'https://i1.hdslb.com/bfs/archive/d44b7dd691392f5a4db0165369670b3a1f41b11f.jpg@480w_270h_1c.webp'},
+  {id:'BV1ti4y1K7uw',cid:312344457,k:'music',c:'Vicky宣宣',d:379,t:'一段旋律怎么变成一首歌？曝光学生党制作歌曲全过程:)',b:'初中生挑战半小时原创音乐',p:'https://i1.hdslb.com/bfs/archive/2a3b28a76cdbe112df557b453600e4c1c98bd3d0.jpg@480w_270h_1c.webp'},
+  {id:'BV1Jb411U7u2',cid:76113255,k:'music',c:'ilem',d:184,t:'洛天依，原创《勾指起誓》',b:'ilem首张专辑主打，引发全网翻唱热潮',p:'https://i0.hdslb.com/bfs/archive/7591c89704b448cd94a0cf749e65a39833c68d4f.png@480w_270h_1c.webp'},
+  {id:'BV1AM4y1M71p',cid:364849402,k:'music',c:'猛男舞团IconX',d:116,t:'破亿纪念!【猛男版】新宝岛 4K高清重置加强版',b:'镇站之宝《新宝岛》高清重制版',p:'https://i0.hdslb.com/bfs/archive/f28fae0e133f8bb289d719e031891764edb332e1.jpg@480w_270h_1c.webp'},
+
+  {id:'BV1bW411n7fY',cid:31621681,k:'kichiku',c:'UP-Sings',d:152,t:'【春晚鬼畜】赵本山：我就是念诗之王！【改革春风吹满地】',b:'全站知名鬼畜视频',p:'https://i0.hdslb.com/bfs/archive/d52994a1876d07a975dc6683b78a898d9b581208.png@480w_270h_1c.webp'},
+  {id:'BV1yt4y1Q7SS',cid:210738676,k:'kichiku',c:'哦呼w',d:146,t:'敢 杀 我 的 马？！',b:'影视鬼畜的巅峰代表作之一',p:'https://i2.hdslb.com/bfs/archive/b1a07a8baefa0694760cd6d99f212bee45d1333d.jpg@480w_270h_1c.webp'},
+  {id:'BV1qt411j7fV',cid:106015992,k:'kichiku',c:'洛温阿特金森',d:222,t:'【派大星的独白】一个关于正常人的故事',b:'「2019黄绿合战」第一名',p:'https://i1.hdslb.com/bfs/archive/3e2e1e0b3c1108b83148bd2f51b3d28fc94c3b63.jpg@480w_270h_1c.webp'},
+  {id:'BV1bz4y1r7Ug',cid:1626864024,k:'kichiku',c:'核动力路灯',d:282,t:'【罗翔】童话镇',b:'鬼畜区最具寓意的作品之一',p:'https://i1.hdslb.com/bfs/archive/66faf0db298d9e61228283628064212e4c3152f8.jpg@480w_270h_1c.webp'},
+  {id:'BV1pi4y147tQ',cid:192377166,k:'kichiku',c:'推背兔の',d:99,t:'最 强 法 海',b:'2020热梗“大威天龙”的起源',p:'https://i0.hdslb.com/bfs/archive/f1dd52536bc7f23fad5dbb9eae93fcd26d72b38b.png@480w_270h_1c.webp'},
+];
+const BY = Object.fromEntries(V.map((v,i)=>[v.id,{...v,rank:i}]));
+
+/* ---------------- 本地状态（无需登录，一键三连 / 稍后再看 / 弹幕偏好） ---------------- */
+const KEY='glassbili.v1';
+const S = (()=>{ const d={triple:[],later:[],hist:[],hidden:[],danmaku:false};
+  try{ return Object.assign(d, JSON.parse(localStorage.getItem(KEY)||'{}')); }catch{ return d; } })();
+const save=()=>{ try{ localStorage.setItem(KEY,JSON.stringify(S)); }catch{} };
+const has=(l,id)=>S[l].includes(id);
+const toggle=(l,id)=>{ const a=S[l],i=a.indexOf(id); if(i>=0)a.splice(i,1); else a.unshift(id); save(); return i<0; };
+const addHist=id=>{ S.hist=[id,...S.hist.filter(x=>x!==id)].slice(0,60); save(); };
+const visible=ids=>ids.filter(id=>BY[id] && !has('hidden',id));
+
+/* ---------------- 纯本地兴趣推荐（无需 B站账号） ---------------- */
+function affinity(){
+  const a={}, ch={};
+  const add=(id,w)=>{ const v=BY[id]; if(!v)return; a[v.k]=(a[v.k]||0)+w; ch[v.c]=(ch[v.c]||0)+w; };
+  S.triple.forEach(id=>add(id,3));
+  S.later.forEach(id=>add(id,2));
+  S.hist.forEach((id,i)=>add(id,1/(1+i*.35)));
+  return {a,ch};
+}
+function recommend(n=12, exclude=[]){
+  const {a,ch}=affinity(), seen=new Set([...S.hist.slice(0,8),...S.hidden,...exclude]);
+  const out=V.filter(v=>!seen.has(v.id)).map(v=>{
+    const r=BY[v.id].rank, ta=a[v.k]||0, ca=ch[v.c]||0;
+    const score=ta+ca*1.2+(1-r/V.length)*.8;
+    let why='入站必刷';
+    if(ca>=1) why=`因为你看过 UP主 ${v.c}`;
+    else if(ta>=1) why=`因为你喜欢「${ZONES[v.k].name}」`;
+    return {v,score,why};
+  }).sort((x,y)=>y.score-x.score);
+  return out.slice(0,n);
+}
+
+/* ---------------- 工具 ---------------- */
+const $=s=>document.querySelector(s);
+const app=$('#app'), top=$('#top'), view=$('#view'), hints=$('#hints'), menuEl=$('#menu'), toastEl=$('#toast');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=s=>{ s=Math.max(0,Math.floor(s||0)); const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=String(s%60).padStart(2,'0'); return h?`${h}:${String(m).padStart(2,'0')}:${x}`:`${m}:${x}`; };
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const P = {
+  play:'M8 5v14l11-7z',
+  triple:'M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z',
+  later:'M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6l5 3 1-1.7-4-2.3z',
+  danmaku:'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM7 11H5V9h2v2zm12 4h-8v-2h8v2zm0-4h-9V9h9v2zm-10 4H5v-2h4v2z',
+  replay:'M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z',
+  ext:'M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z',
+  hide:'M12 2a10 10 0 100 20 10 10 0 000-20zM4 12a8 8 0 0112.9-6.3L5.7 16.9A8 8 0 014 12zm8 8a8 8 0 01-4.9-1.7L18.3 7.1A8 8 0 0112 20z',
+  search:'M15.5 14h-.8l-.3-.3A6.5 6.5 0 109.5 16a6.5 6.5 0 004.2-1.6l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 110-9 4.5 4.5 0 010 9z',
+};
+const ic=(p,cls='')=>`<svg viewBox="0 0 24 24" class="${cls}" aria-hidden="true"><path d="${P[p]}"/></svg>`;
+
+/* ---------------- 模板 ---------------- */
+function thumb(v){
+  return `<div class="thumb" style="--h:${ZONES[v.k].h}"><span class="ph">${esc(v.c.slice(0,2))}</span>`+
+    `<img alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" src="${esc(v.p)}">`+
+    `<span class="dur">${fmt(v.d)}</span>${badges(v.id)}</div>`;
+}
+function badges(id){
+  const b=[]; if(has('triple',id)) b.push(`<i>${ic('triple')}</i>`); if(has('later',id)) b.push(`<i class="cy">${ic('later')}</i>`);
+  return (b.length?`<span class="badge">${b.join('')}</span>`:'') + (has('hist',id)?'<span class="watched"></span>':'');
+}
+const card=(v,key)=>`<button class="f card" data-key="${key}" data-vid="${v.id}" aria-label="${esc(v.t)}">${thumb(v)}<div class="ct">${esc(v.t)}</div><div class="cm"><span class="up-tag">UP</span>${esc(v.c)}</div></button>`;
+const row=(v,key,why)=>`<button class="f row" data-key="${key}" data-vid="${v.id}" aria-label="${esc(v.t)}">${thumb(v)}<div class="rt"><div class="t">${esc(v.t)}</div><div class="m">${esc(v.c)} · ${ZONES[v.k].name}</div>${why?`<span class="why">${esc(why)}</span>`:''}</div></button>`;
+function shelf(id,title,ids,emptyMsg){
+  const vs=visible(ids);
+  if(!vs.length) return emptyMsg?`<section class="shelf"><h3>${esc(title)}</h3><div class="empty">${esc(emptyMsg)}</div></section>`:'';
+  return `<section class="shelf"><h3>${esc(title)}<span>${vs.length}</span></h3><div class="track" id="tr-${id}">${vs.map(i=>card(BY[i],`${id}:${i}`)).join('')}</div></section>`;
+}
+document.addEventListener('error',e=>{ if(e.target.tagName==='IMG') e.target.remove(); },true);
+
+/* =========================================================
+   屏幕定义
+   ========================================================= */
+const TABS=[['home','推荐'],['foryou','为你精选'],['zones','分区'],['library','我的'],['search','搜索']];
+const H_NAV=[['↕↔','移动'],['●','选择'],['长按','更多'],['Esc','返回']];
+
+const SCREENS = {
+  home(){
+    const classic=['BV1jE41137eu','BV1ED4y1Y7dc','BV1BK411L7DJ','BV1ph4y1g75E','BV1MN4y177PB','BV1x54y1e7zf','BV1cy4y1k7A2','BV1Sx411T7QQ','BV16X4y1g7wT','BV1AM4y1M71p'];
+    let html='';
+    if(S.hist.length) html+=shelf('cont','继续观看',S.hist.slice(0,10));
+    html+=shelf('top','入站必刷 · 镇站经典',classic);
+    for(const k in ZONES) html+=shelf(k,ZONES[k].name,V.filter(v=>v.k===k).map(v=>v.id));
+    return {tabs:true, html, hints:H_NAV};
+  },
+  foryou(){
+    const rec=recommend(12);
+    if(!rec.length) return {tabs:true, html:`<div class="empty">所有推荐都已经看完啦 🎉</div>`, hints:H_NAV};
+    const [h,...rest]=rec;
+    const cold=!S.triple.length&&!S.hist.length&&!S.later.length;
+    const html=
+      `<button class="f hero" data-key="hero:${h.v.id}" data-vid="${h.v.id}">${thumb(h.v)}<div class="ov"><div class="why">${esc(h.why)}</div><div class="t">${esc(h.v.t)}</div><div class="m">UP ${esc(h.v.c)} · ${fmt(h.v.d)}</div></div></button>`+
+      (cold?`<div class="empty">无需登录 B站账号：三连、稍后再看和观看历史都只存在本地浏览器里，让推荐更合你胃口。</div>`:'')+
+      `<div class="section-h">猜你想看</div><div class="list">${rest.map(r=>row(r.v,`fy:${r.v.id}`,r.why)).join('')}</div>`;
+    return {tabs:true, html, hints:H_NAV};
+  },
+  zones(){
+    const html=`<div class="grid">${Object.entries(ZONES).map(([k,t])=>
+      `<button class="f tile" data-key="zone:${k}" data-zone="${k}" style="--h:${t.h}"><span class="g">${t.glyph}</span><span><div class="n">${t.name}</div><div class="c">${V.filter(v=>v.k===k).length} 个精选视频</div></span></button>`).join('')}</div>`;
+    return {tabs:true, html, hints:[['↕↔','移动'],['●','进入分区'],['Esc','返回']]};
+  },
+  zone(e){
+    const t=ZONES[e.k];
+    const html=`<div class="list">${visible(V.filter(v=>v.k===e.k).map(v=>v.id)).map(id=>row(BY[id],`zn:${id}`)).join('')}</div>`;
+    return {title:t.name, crumb:'分区', html, hints:H_NAV};
+  },
+  library(){
+    let html=shelf('later','稍后再看',S.later,'长按任意视频 → 加入稍后再看')+
+             shelf('triple','已三连',S.triple,'在播放页一键三连的视频会出现在这里')+
+             shelf('hist','观看历史',S.hist,'还没有观看记录');
+    if(S.hist.length||S.hidden.length)
+      html+=`<div class="chips">${S.hist.length?`<button class="f chip danger" data-key="act:clearhist" data-act="clearhist">清除观看历史</button>`:''}${S.hidden.length?`<button class="f chip" data-key="act:unhide" data-act="unhide">恢复 ${S.hidden.length} 个已隐藏</button>`:''}</div>`;
+    return {tabs:true, html, hints:H_NAV};
+  },
+  search(e){
+    const q=e.q||'';
+    const html=`<div class="sbox">${ic('search')}<input id="q" class="f" data-key="q" type="text" value="${esc(q)}" placeholder="捏合输入 · 搜索标题 / UP主 / BV号" autocomplete="off" spellcheck="false" enterkeyhint="search"></div>`+
+      `<div class="chips">${['稚晖君','何同学','罗翔','影视飓风','黑神话','木鱼水心'].map(s=>`<button class="f chip" data-key="qs:${s}" data-q="${esc(s)}">${esc(s)}</button>`).join('')}</div>`+
+      `<div id="results">${results(q)}</div>`;
+    return {tabs:true, html, hints:[['↕↔','移动'],['●','输入 / 选择'],['Esc','返回']]};
+  },
+  watch(e){
+    const v=BY[e.vid];
+    const next=related(v);
+    const src=playerUrl(v);
+    const html=
+      `<div class="player"><iframe id="bili" src="${src}" tabindex="-1" scrolling="no" allowfullscreen="true" allow="autoplay; fullscreen" sandbox="allow-top-navigation-by-user-activation allow-same-origin allow-forms allow-scripts allow-popups"></iframe></div>`+
+      `<div class="winfo"><h1>${esc(v.t)}</h1><p><span>UP ${esc(v.c)}</span><span>·</span><span>${ZONES[v.k].name}</span><span>·</span><span>${fmt(v.d)}</span><span class="bv">${v.id}</span></p></div>`+
+      `<div class="rail" id="rail">`+
+        rb('triple','triple',has('triple',v.id)?'已三连':'一键三连',has('triple',v.id))+
+        rb('later','later',has('later',v.id)?'已加入':'稍后再看',has('later',v.id),'cy')+
+        rb('danmaku','danmaku',S.danmaku?'弹幕 开':'弹幕 关',S.danmaku,'cy')+
+        rb('replay','replay','重播',false)+
+        `<a class="f rb" data-key="act:ext" href="https://www.bilibili.com/video/${v.id}" target="_blank" rel="noopener noreferrer" aria-label="B站打开"><span class="ic">${ic('ext')}</span><span>B站打开</span></a>`+
+      `</div>`+
+      `<p class="blurb">${esc(v.b)}</p>`+
+      shelf('next','接下来播放',next);
+    return {title:v.c, crumb:'正在播放', html, focus:'act:triple', watch:true,
+      hints:[['●','操作'],['↕','控件 / 推荐'],['Esc','返回']]};
+  },
+};
+const playerUrl=v=>`https://player.bilibili.com/player.html?bvid=${v.id}&cid=${v.cid}&page=1&high_quality=1&danmaku=${S.danmaku?1:0}&autoplay=1`;
+const rb=(act,icon,label,on,extra='')=>`<button class="f rb${on?' on':''}${extra?' '+extra:''}" data-key="act:${act}" data-act="${act}" id="rb-${act}" aria-label="${label}"><span class="ic">${ic(icon)}</span><span>${label}</span></button>`;
+function related(v){
+  const same=V.filter(x=>x.k===v.k&&x.id!==v.id).map(x=>x.id);
+  const rec=recommend(12,[v.id]).map(r=>r.v.id).filter(id=>!same.includes(id));
+  return [...same.slice(0,5),...rec].slice(0,10);
+}
+function results(q){
+  q=q.trim().toLowerCase();
+  if(!q) return `<div class="empty">支持搜索标题、UP主、分区或 BV 号。在眼镜上捏合输入框即可唤起语音 / 手写输入。</div>`;
+  const r=V.filter(v=>(v.t+' '+v.c+' '+v.b+' '+v.id+' '+ZONES[v.k].name).toLowerCase().includes(q));
+  return r.length?`<div class="section-h">${r.length} 个结果</div><div class="list">${r.map(v=>row(v,`sr:${v.id}`)).join('')}</div>`:`<div class="empty">没有找到“${esc(q)}”</div>`;
+}
+
+/* =========================================================
+   路由 + 浅历史栈（≤ 5 条）
+   ========================================================= */
+let curTab='home', stack=[{name:'home'}], tabEntry=false, menuOpen=false;
+let useHist=true; try{ history.replaceState({g:0},''); }catch{ useHist=false; }
+const hpush=()=>{ if(useHist) try{ history.pushState({g:1},''); }catch{ useHist=false; } };
+const topE=()=>stack[stack.length-1];
+
+function render(){
+  const e=topE(), scr=SCREENS[e.name](e);
+  app.classList.toggle('watching',!!scr.watch);
+  top.innerHTML = scr.tabs
+    ? `<nav class="tabs" role="tablist">${TABS.map(([k,l])=>`<button class="f tab${k===curTab?' on':''}" role="tab" aria-selected="${k===curTab}" data-key="tab:${k}" data-tab="${k}">${l}</button>`).join('')}</nav>`
+    : `<div class="titlebar"><span class="crumb">${esc(scr.crumb||'')}</span><h2>${esc(scr.title||'')}</h2></div>`;
+  view.innerHTML=`<div class="vs screen-in" id="vs">${scr.html}</div>`;
+  hints.innerHTML=scr.hints.map(([k,l])=>`<span class="h"><kbd>${k}</kbd>${l}</span>`).join('')+`<span id="clock"></span>`;
+  tick();
+  const vs=$('#vs'); vs.addEventListener('scroll',()=>fades(vs),{passive:true});
+  view.querySelectorAll('.track').forEach(t=>t.addEventListener('scroll',()=>fades(t),{passive:true}));
+  const sv=e.saved;
+  if(sv){
+    vs.scrollTop=sv.vs||0;
+    for(const id in sv.tracks){ const t=document.getElementById(id); if(t){ t.scrollLeft=sv.tracks[id][0]; if(sv.tracks[id][1]) t.dataset.last=sv.tracks[id][1]; } }
+  }
+  requestAnimationFrame(()=>{
+    view.querySelectorAll('.track').forEach(fades); fades(vs);
+    const want=(sv&&sv.key)||e.focusKey||scr.focus;
+    const el=want&&byKey(want);
+    if(el) focusEl(el,true); else initialFocus(true);
+  });
+}
+function snapshot(e){
+  const a=document.activeElement, vs=$('#vs');
+  e.saved={ key:a&&a.dataset?a.dataset.key:null, vs:vs?vs.scrollTop:0,
+    tracks:Object.fromEntries([...view.querySelectorAll('.track')].map(t=>[t.id,[t.scrollLeft,t.dataset.last||'']])) };
+}
+function push(entry){ snapshot(topE()); stack.push(entry); hpush(); render(); }
+function replaceTop(entry){ stack[stack.length-1]=entry; render(); }
+function popScreen(){ stack.pop(); render(); }
+function setTab(t){
+  if(t===curTab) return;
+  if(t==='home'){ if(tabEntry){ goBack(); return; } }
+  else if(!tabEntry){ tabEntry=true; hpush(); }
+  switchTab(t);
+}
+function switchTab(t){ curTab=t; stack=[{name:t,focusKey:'tab:'+t}]; render(); }
+const canBack=()=>menuOpen||stack.length>1||tabEntry;
+function goBack(){
+  if(!canBack()){ bump(document.activeElement,'up'); return; }
+  if(useHist) history.back(); else handlePop();
+}
+function handlePop(){
+  if(menuOpen) return closeMenu();
+  if(stack.length>1) return popScreen();
+  if(tabEntry){ tabEntry=false; switchTab('home'); }
+}
+window.addEventListener('popstate',handlePop);
+
+/* =========================================================
+   空间焦点引擎（单一焦点所有者 + 几何方向导航 + 货架/Tab 记忆）
+   ========================================================= */
+let lastFocused=null;
+const byKey=k=>document.querySelector(`[data-key="${CSS.escape(k)}"]`);
+function focusables(){
+  const scope=menuOpen?menuEl:$('#ui');
+  return [...scope.querySelectorAll('.f')].filter(el=>!el.disabled&&el.offsetParent!==null);
+}
+function initialFocus(instant){
+  const list=focusables();
+  const el=(menuOpen?list[0]:list.find(x=>view.contains(x)))||list[0];
+  if(el) focusEl(el,instant);
+}
+function focusEl(el,instant){
+  el.focus({preventScroll:true});
+  lastFocused=el;
+  const tr=el.closest('.track'); if(tr) tr.dataset.last=el.dataset.key;
+  reveal(el,instant);
+}
+function reveal(el,instant){
+  const behavior=(instant||reduced)?'auto':'smooth';
+  const tr=el.closest('.track');
+  if(tr){ const idx=[...tr.children].indexOf(el); tr.scrollTo({left: idx===0?0:Math.max(0,el.offsetLeft-24), behavior}); }
+  const vs=el.closest('.vs'); if(!vs) return;
+  const unit=el.closest('.shelf')||el;
+  const vr=vs.getBoundingClientRect(), ur=unit.getBoundingClientRect();
+  const y=ur.top-vr.top+vs.scrollTop, h=ur.height, padT=30, padB=50;
+  const first=focusables().find(x=>vs.contains(x));
+  let to=null;
+  if(unit.contains(first)||el===first) to=0;
+  else if(y-padT<vs.scrollTop) to=y-padT;
+  else if(y+h+padB>vs.scrollTop+vs.clientHeight) to=y+h+padB-vs.clientHeight;
+  if(to!==null) vs.scrollTo({top:Math.max(0,to),behavior});
+}
+function move(dir){
+  const cur=document.activeElement, list=focusables();
+  if(!list.includes(cur)){ (lastFocused&&list.includes(lastFocused))?focusEl(lastFocused):initialFocus(); return; }
+  const r=cur.getBoundingClientRect(), cx=(r.left+r.right)/2, cy=(r.top+r.bottom)/2;
+  let best=null, bs=Infinity;
+  for(const el of list){
+    if(el===cur) continue;
+    const c=el.getBoundingClientRect(), ex=(c.left+c.right)/2, ey=(c.top+c.bottom)/2;
+    let s;
+    if(dir==='left'||dir==='right'){
+      const p=dir==='right'?ex-cx:cx-ex; if(p<=4) continue;
+      const ov=Math.min(c.bottom,r.bottom)-Math.max(c.top,r.top); if(ov<=Math.min(c.height,r.height)*.3) continue;
+      s=p+Math.abs(ey-cy)*2;
+    }else{
+      const p=dir==='down'?c.top-r.bottom:r.top-c.bottom; if(p<-Math.min(c.height,r.height)*.5) continue;
+      const ov=Math.min(c.right,r.right)-Math.max(c.left,r.left);
+      s=Math.max(p,0)*1.2+Math.abs(ex-cx)*(ov>0?.25:1.1);
+    }
+    if(s<bs){ bs=s; best=el; }
+  }
+  if(!best){ bump(cur,dir); return; }
+  if(dir==='up'||dir==='down'){
+    const tr=best.closest('.track');
+    if(tr&&tr!==cur.closest('.track')&&tr.dataset.last){ const m=byKey(tr.dataset.last); if(m&&tr.contains(m)) best=m; }
+    if(best.classList.contains('tab')&&!cur.classList.contains('tab')){ const on=top.querySelector('.tab.on'); if(on) best=on; }
+  }
+  focusEl(best);
+}
+function bump(el,dir){
+  if(!el||!el.classList) return;
+  const c='bump-'+dir; el.classList.remove(c); void el.offsetWidth; el.classList.add(c);
+  setTimeout(()=>el.classList.remove(c),240);
+}
+function fades(el){
+  if(el.classList.contains('track')){
+    el.classList.toggle('fl',el.scrollLeft>4);
+    el.classList.toggle('fr',el.scrollLeft+el.clientWidth<el.scrollWidth-4);
+  }else{
+    el.classList.toggle('ft',el.scrollTop>4);
+    el.classList.toggle('fb',el.scrollTop+el.clientHeight<el.scrollHeight-4);
+  }
+}
+document.addEventListener('focusin',e=>{ if(e.target.classList&&e.target.classList.contains('f')){ lastFocused=e.target; const tr=e.target.closest('.track'); if(tr) tr.dataset.last=e.target.dataset.key; } });
+
+/* =========================================================
+   输入：方向键 / Enter(捏合) / 长按 / 返回 / 透视模拟
+   ========================================================= */
+let pressEl=null, pressTimer=0, pressFired=false;
+const BACK_KEYS=new Set(['Escape','GoBack','BrowserBack']);
+const DIRS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right'};
+document.addEventListener('keydown',e=>{
+  const k=e.key, inInput=e.target.tagName==='INPUT';
+  if(DIRS[k]){
+    if(inInput&&(k==='ArrowLeft'||k==='ArrowRight')&&e.target.value) return;
+    e.preventDefault(); move(DIRS[k]); return;
+  }
+  if(BACK_KEYS.has(k)||(k==='Backspace'&&!inInput)){ e.preventDefault(); goBack(); return; }
+  if(k==='Enter'||k===' '){
+    if(inInput){ if(k==='Enter'&&e.target.value.trim()){ e.preventDefault(); const f=$('#results .f'); if(f) focusEl(f); } return; }
+    const el=document.activeElement;
+    e.preventDefault();
+    if(!el||!el.classList||!el.classList.contains('f')){ initialFocus(); return; }
+    if(e.repeat) return;
+    if(el.dataset.vid){
+      pressEl=el; pressFired=false; el.classList.add('pressing');
+      pressTimer=setTimeout(()=>{ pressFired=true; el.classList.remove('pressing'); openMenu(el.dataset.vid,el); },550);
+    }else el.click();
+    return;
+  }
+  if((k==='m'||k==='ContextMenu')&&!inInput){ const el=document.activeElement; if(el&&el.dataset&&el.dataset.vid){ e.preventDefault(); openMenu(el.dataset.vid,el); } }
+  if(k==='b'&&!inInput){ app.classList.toggle('pt'); toast(app.classList.contains('pt')?'透视模拟：开（加色混合）':'透视模拟：关'); }
+});
+document.addEventListener('keyup',e=>{
+  if((e.key==='Enter'||e.key===' ')&&pressEl){
+    clearTimeout(pressTimer); const el=pressEl; pressEl=null; el.classList.remove('pressing');
+    if(!pressFired) el.click();
+  }
+});
+document.addEventListener('contextmenu',e=>{ const el=e.target.closest('[data-vid].f'); if(el){ e.preventDefault(); el.focus({preventScroll:true}); openMenu(el.dataset.vid,el); } });
+
+app.addEventListener('click',e=>{
+  const el=e.target.closest('.f'); if(!el) return;
+  if(el.tagName==='INPUT'||el.tagName==='A') return;
+  if(document.activeElement!==el) focusEl(el,true);
+  const d=el.dataset;
+  if(d.mact) return menuAction(d.mact);
+  if(d.tab) return setTab(d.tab);
+  if(d.zone) return push({name:'zone',k:d.zone});
+  if(d.q!==undefined){ const i=$('#q'); i.value=d.q; topE().q=d.q; $('#results').innerHTML=results(d.q); return; }
+  if(d.act) return action(d.act);
+  if(d.vid) return openWatch(d.vid);
+});
+view.addEventListener('input',e=>{ if(e.target.id==='q'){ topE().q=e.target.value; $('#results').innerHTML=results(e.target.value); } });
+
+function openWatch(id){
+  addHist(id);
+  if(topE().name==='watch') replaceTop({name:'watch',vid:id});
+  else push({name:'watch',vid:id});
+}
+function action(a){
+  const e=topE();
+  if(a==='clearhist'){ S.hist=[]; save(); toast('已清除观看历史'); return replaceTop({name:'library',focusKey:'tab:library'}); }
+  if(a==='unhide'){ S.hidden=[]; save(); toast('已恢复'); return replaceTop({name:'library',focusKey:'tab:library'}); }
+  if(e.name!=='watch') return;
+  const v=BY[e.vid];
+  if(a==='triple'){
+    const on=toggle('triple',v.id), btn=$('#rb-triple');
+    btn.classList.toggle('on',on); btn.querySelector('span:last-child').textContent=on?'已三连':'一键三连';
+    if(on){ btn.classList.remove('triple-pop'); void btn.offsetWidth; btn.classList.add('triple-pop'); toast('已一键三连（点赞·投币·收藏）'); }
+    else toast('已取消三连');
+  }
+  if(a==='later'){
+    const on=toggle('later',v.id), btn=$('#rb-later');
+    btn.classList.toggle('on',on); btn.querySelector('span:last-child').textContent=on?'已加入':'稍后再看';
+    toast(on?'已加入稍后再看':'已移出稍后再看');
+  }
+  if(a==='danmaku'){
+    S.danmaku=!S.danmaku; save();
+    const btn=$('#rb-danmaku');
+    btn.classList.toggle('on',S.danmaku); btn.querySelector('span:last-child').textContent=S.danmaku?'弹幕 开':'弹幕 关';
+    const f=$('#bili'); if(f) f.src=playerUrl(v);
+    toast(S.danmaku?'弹幕已开启':'弹幕已关闭（眼镜清晰模式）');
+  }
+  if(a==='replay'){ const f=$('#bili'); if(f) f.src=playerUrl(v); toast('重新播放'); }
+}
+
+/* =========================================================
+   上下文菜单
+   ========================================================= */
+let menuAnchor=null, menuVid=null;
+function openMenu(id,anchor){
+  const v=BY[id]; if(!v) return;
+  menuAnchor=anchor; menuVid=id; menuOpen=true;
+  menuEl.innerHTML=`<div class="mh">${thumb(v)}<div class="t">${esc(v.t)}</div></div>`+
+    mi('play','play','播放')+mi('triple','triple',has('triple',id)?'取消三连':'一键三连')+
+    mi('later','later',has('later',id)?'移出稍后再看':'稍后再看')+mi('hide','hide','不感兴趣');
+  menuEl.setAttribute('aria-hidden','false');
+  $('#ui').inert=true; app.classList.add('menu');
+  hpush();
+  requestAnimationFrame(()=>focusEl(menuEl.querySelector('.f'),true));
+}
+const mi=(a,icon,l)=>`<button class="f mi" role="menuitem" data-key="m:${a}" data-mact="${a}">${ic(icon)}${l}</button>`;
+function closeMenu(after){
+  menuOpen=false; app.classList.remove('menu'); $('#ui').inert=false; menuEl.setAttribute('aria-hidden','true');
+  if(after) after(); else if(menuAnchor&&document.contains(menuAnchor)) focusEl(menuAnchor,true); else initialFocus(true);
+}
+function menuAction(a){
+  const id=menuVid, anchorKey=menuAnchor&&menuAnchor.dataset.key;
+  const finish=fn=>{ if(useHist){ const h=()=>{ window.removeEventListener('popstate',h,true); setTimeout(fn,0); }; window.addEventListener('popstate',h,true); history.back(); } else { closeMenu(); fn(); } };
+  if(a==='play') return finish(()=>openWatch(id));
+  if(a==='triple'){ const on=toggle('triple',id); toast(on?'已一键三连':'已取消三连'); }
+  if(a==='later'){ const on=toggle('later',id); toast(on?'已加入稍后再看':'已移出稍后再看'); }
+  if(a==='hide'){ if(!has('hidden',id)) S.hidden.push(id); save(); toast('已隐藏，推荐将减少此类内容'); }
+  finish(()=>{ const e=topE(); snapshot(e); if(e.saved) e.saved.key=anchorKey; render(); });
+}
+
+/* ---------------- Toast / 时钟 ---------------- */
+let toastT=0;
+function toast(m){ toastEl.textContent=m; toastEl.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove('show'),1700); }
+function tick(){ const c=$('#clock'); if(c){ const d=new Date(); c.textContent=`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; } }
+setInterval(tick,15000);
+
+render();
+})();
+</script>
+</body>
+</html>

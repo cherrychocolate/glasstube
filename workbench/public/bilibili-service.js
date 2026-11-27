@@ -16,6 +16,7 @@ const discovery = BilibiliDiscovery.create(localStorage, [
 let feed = {items:[], categories:new Map(), busy:false, error:''};
 const CATEGORY_BATCH = 5;
 let searchSession = {query:'',mode:'live',items:[],error:'',notice:''};
+let searchResult = null, searchFilter = 'all', lastSearchResult = null, lastSearchFilter = 'all';
 let viewTitle = '', account = 'disconnected', qr = '', pollTimer, stream = null;
 let loginMessage = '';
 let dashPlayer = null;
@@ -66,17 +67,38 @@ function draw(defaultID){
     if(target)focus(target.dataset.biliId);
   });
 }
-function go(route, render = true, origin){if(state.route==='search'){const {query,mode,items,error,notice}=state;searchSession={query,mode,items,error,notice};}generation++;state.busy=false;remember();stack.push({focus:origin||focusMemory.get(scope()),route:state.route,selected:state.selected,part:state.part,items:state.items,query:state.query,mode:state.mode,offline:state.offline,viewTitle,stream,folders:state.folders,error:state.error,notice:state.notice});state.route=route;state.panel='';state.error='';state.notice='';if(route!=='player')media?.pause?.();if(render)draw();}
-function back(){if(!active())return false;if(immersive&&!state.panel){setImmersive(false);return true;}if(state.panel){if(state.panel==='danmaku'){state.panel='danmaku-options';draw('danmaku');return true}if(state.panel==='login')stopPoll();if(state.panel==='library-tools'){state.panel='';draw('library-tools');return true;}if(state.panel==='danmaku-options'){state.panel='settings';draw('danmaku-options');return true;}state.panel='';draw(focusMemory.get(scope())||'settings');return true}if(stack.length){if(state.route==='player'&&!state.busy&&media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);generation++;state.busy=false;remember();media?.pause?.();const {focus:origin,...previous}=stack.pop();Object.assign(state,previous);viewTitle=previous.viewTitle;stream=previous.stream;draw(origin);return true}osNavigate('center');return true}
+function go(route, render = true, origin){if(state.route==='search'){const {query,mode,items,error,notice}=state;searchSession={query,mode,items,error,notice};lastSearchResult=searchResult;lastSearchFilter=searchFilter;}generation++;state.busy=false;remember();stack.push({focus:origin||focusMemory.get(scope()),route:state.route,selected:state.selected,part:state.part,items:state.items,query:state.query,mode:state.mode,offline:state.offline,viewTitle,stream,searchResult,searchFilter,folders:state.folders,error:state.error,notice:state.notice});state.route=route;state.panel='';state.error='';state.notice='';if(route!=='player')media?.pause?.();if(render)draw();}
+function back(){if(!active())return false;if(immersive&&!state.panel){setImmersive(false);return true;}if(state.panel){if(state.panel==='danmaku'){state.panel='danmaku-options';draw('danmaku');return true}if(state.panel==='login')stopPoll();if(state.panel==='library-tools'){state.panel='';draw('library-tools');return true;}if(state.panel==='danmaku-options'){state.panel='settings';draw('danmaku-options');return true;}state.panel='';draw(focusMemory.get(scope())||'settings');return true}if(stack.length){if(state.route==='player'&&!state.busy&&media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);generation++;state.busy=false;remember();media?.pause?.();const {focus:origin,searchResult:previousSearch,searchFilter:previousFilter,...previous}=stack.pop();Object.assign(state,previous);viewTitle=previous.viewTitle;stream=previous.stream;searchResult=previousSearch;searchFilter=previousFilter;draw(origin);return true}osNavigate('center');return true}
 function showPanel(panel, initialFocus){remember();state.panel=panel;draw(initialFocus)}
 async function request(path,post=false){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),9500);try{const r=await fetch('/api/bilibili/'+path,{signal:controller.signal,cache:'no-store',...(post?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{})});const d=await r.json();if(!r.ok)throw Error(d.error||'读取失败');return d}finally{clearTimeout(timer)}}
-async function loadSearch(){const gen=++generation;state.mode='live';state.busy=true;state.error='';state.items=[];draw();try{const data=await request('search?q='+encodeURIComponent(state.query));if(gen!==generation)return;state.items=data.items;state.notice=''}catch(e){if(gen!==generation)return;state.error=e.name==='AbortError'?'读取超时，请重试。':e.message;const query=state.query.normalize('NFKC').toLowerCase();
-const loaded=[...feed.items,...[...feed.categories.values()].flatMap(category=>category.items)];
-const matches=loaded.filter(video=>[video.title,video.author,video.topic,video.id]
-  .some(field=>String(field||'').normalize('NFKC').toLowerCase().includes(query)));
-state.items=[...new Map([...discovery.search(state.query),...matches].map(video=>[video.id,video])).values()];
-if(state.items.length){state.error='';state.notice='实时搜索暂不可用，以下是已加载视频中的匹配结果。';}}finally{if(gen===generation){state.busy=false;if(active())draw()}}}
-const isFeed = () => ['home','featured','topics'].includes(state.route);
+async function loadSearch() {
+  const gen = ++generation;
+  state.mode='live';
+  state.busy=true;
+  state.error='';
+  state.notice='';
+  state.items=[];
+  searchResult=null;
+  draw();
+  try {
+    const result = await request('search?q='+encodeURIComponent(state.query));
+    if(gen!==generation) return;
+    state.items=result.items;
+    searchResult=result;
+  } catch(error) {
+    if(gen!==generation) return;
+    state.error=error.name==='AbortError'?'读取超时，请重试。':error.message;
+    const query=state.query.toLowerCase();
+    const loaded=[...feed.items,...[...feed.categories.values()].flatMap(category=>category.items)];
+    const matches=loaded.filter(video=>[video.title,video.author,video.topic,video.id]
+      .some(field=>String(field||'').normalize('NFKC').toLowerCase().includes(query)));
+    state.items=[...new Map([...discovery.search(state.query),...matches].map(video=>[video.id,video])).values()];
+    if(state.items.length){state.error='';state.notice='实时搜索暂不可用，以下是已加载视频中的匹配结果。';}
+  } finally {
+    if(gen===generation){state.busy=false;if(active())draw();}
+  }
+}
+const isFeed = () => ['home','featured'].includes(state.route);
 async function refreshFeed() {
   if (feed.busy) return;
   remember();
@@ -108,6 +130,10 @@ function relatedVideos() {
 }
 function cardVideo(key) {
   const id = key.split(':').at(-1);
+  if (key.startsWith('search-video:')) {
+    return state.items.find(video=>video.id===id)||(searchResult?.creators||[])
+      .flatMap(creator=>creator.items).find(video=>video.id===id);
+  }
   if (key.startsWith('topic-video:')) return topicPages.get(viewTitle)?.items.find(video=>video.id===id);
   if (key.startsWith('library:')) return catalog(id);
   if (key.startsWith('related:')) return relatedVideos().find(video => video.id === id);
@@ -379,9 +405,6 @@ function videoShelf(title, items, prefix, id = '') {
   return `<section class="bili-glass-shelf" ${id?`id="${id}"`:''}><h3>${H(title)} <span>${items.length}</span></h3>
     ${items.length?`<div class="bili-track">${cards(items,prefix)}</div>`:'<p class="bili-feed-empty">暂无视频</p>'}</section>`;
 }
-function topicGroups() {
-  return [...feed.categories].map(([topic,shelf])=>[topic,shelf.items]);
-}
 function categoryShelf(topic, shelf) {
   const visible = shelf.items.slice(0,shelf.count);
   return `<section class="bili-glass-shelf" data-category="${H(topic)}"><h3>${H(topic)} <span>${visible.length}</span></h3>
@@ -465,7 +488,12 @@ function shelfView() {
   return `${header(viewTitle)}${status()}<div class="bili-list bili-video-list">${cards(state.items)}</div>
     ${!state.busy&&!state.items.length&&!state.notice?'<p class="bili-note">这里暂时没有视频。</p>':''}`;
 }
-const TOPIC_CACHE_KEY = 'glasstube-topic-videos-v1';
+const REGION_IDS = new Map([
+  ['动画',1],['番剧',13],['国创',167],['音乐',3],['舞蹈',129],['游戏',4],
+  ['知识',36],['科技',188],['生活',160],['美食',211],['鬼畜',119],['时尚',155],
+  ['资讯',202],['娱乐',5],['影视',181],['纪录片',177],['电影',23],['电视剧',11]
+]);
+const TOPIC_CACHE_KEY = 'glasstube-region-videos-v1';
 const topicPages = new Map();
 try {
   const cached = JSON.parse(localStorage.getItem(TOPIC_CACHE_KEY)||'[]');
@@ -482,11 +510,9 @@ function saveTopic(topic, data) {
   } catch { /* Keep the topic available in this session. */ }
 }
 function topicsView() {
-  const topics = new Map(topicGroups());
-  for(const [topic,entry] of topicPages) if(!topics.has(topic)&&entry.items.length) topics.set(topic,entry.items);
-  return `<div class="bili-topic-grid">${[...topics].map(([topic,videos],index)=>
+  return `<div class="bili-topic-grid">${[...REGION_IDS.keys()].map((topic,index)=>
     `<button class="bili-topic-tile" style="--h:${(205+index*47)%360}" data-bili-id="topic:${H(topic)}">
-      <span>${icon('discover')}</span><span>${H(topic)}<small>${videos.length} 个视频</small></span></button>`).join('')}</div>${feedStatus()}`;
+      <span>${icon('discover')}</span><span>${H(topic)}</span></button>`).join('')}</div>`;
 }
 function topicView() {
   const data = topicPages.get(viewTitle);
@@ -496,8 +522,8 @@ function topicView() {
     <p class="bili-category-status bili-topic-status" id="bili-topic-status" role="status">${H(data.message||'')}</p>`;
 }
 function openTopic(topic) {
-  const cached = topicPages.get(topic)?.items;
-  const items = cached?.length ? cached : feed.categories.get(topic)?.items.slice(0,CATEGORY_BATCH)||[];
+  if(!REGION_IDS.has(topic)) return;
+  const items = topicPages.get(topic)?.items||[];
   const data = {items,page:1,reserve:[],needsRefresh:true};
   topicPages.set(topic,data);
   go('topic',false);
@@ -526,11 +552,11 @@ async function loadTopic(topic, moveFrom) {
   let page = refresh?1:data.page;
   try {
     while (reserve.length<CATEGORY_BATCH && page!==null) {
-      const response = await request('category?'+new URLSearchParams({topic,page}));
+      const response = await request('region?'+new URLSearchParams({id:REGION_IDS.get(topic),page}));
       if (topicPages.get(topic)!==data) return;
       if (!navigator.onLine || response.stale) throw Error('offline');
       for (const video of response.items) {
-        if ((video.topic||'其他')!==topic || existing.has(video.id)) continue;
+        if (existing.has(video.id)) continue;
         existing.add(video.id);
         reserve.push(video);
       }
@@ -580,7 +606,29 @@ function bindTopicScroll(body) {
   },{passive:true});
 }
 document.addEventListener('keydown',event=>{
-  if(event.key!=='ArrowDown'||state.route!=='topic'||state.panel) return;
+  if(!['ArrowUp','ArrowDown'].includes(event.key)||state.panel) return;
+  const row=event.target.closest?.('.bili-video-list .bili-video-card');
+  const up=event.key==='ArrowUp';
+  const rows=row?[...scrollArea().querySelectorAll('.bili-video-list .bili-video-card')]:[];
+  let adjacent=row?rows[rows.indexOf(row)+(up?-1:1)]:null;
+  const shelf=up&&event.target.closest?.('.bili-track .bili-video-card')?.closest('.bili-glass-shelf');
+  if(shelf){
+    const shelves=[...scrollArea().querySelectorAll('.bili-glass-shelf')].filter(section=>section.querySelector('.bili-track .bili-video-card'));
+    const prior=shelves[shelves.indexOf(shelf)-1];
+    if(prior){
+      const center=element=>{const bounds=element.getBoundingClientRect();return bounds.left+bounds.width/2;};
+      const x=center(event.target);
+      adjacent=[...prior.querySelectorAll('.bili-track .bili-video-card')]
+        .reduce((best,card)=>Math.abs(center(card)-x)<Math.abs(center(best)-x)?card:best);
+    }
+  }
+  if(adjacent){
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    focus(adjacent.dataset.biliId);
+    return;
+  }
+  if(event.key!=='ArrowDown'||state.route!=='topic') return;
   const card=event.target.closest?.('#bili-topic-results [data-bili-id]');
   if(!card || card.nextElementSibling) return;
   event.preventDefault();
@@ -602,21 +650,34 @@ function cloudView() {
 }
 
 function search() {
-  const results = state.items.length
-    ? `<h2 class="bili-section-label">${state.items.length} 个结果</h2><div class="bili-list bili-video-list">${cards(state.items)}</div>`
-    : !state.busy&&!state.error
-      ? `<p class="bili-feed-empty">${state.query?`没有找到“${H(state.query)}”`:'搜索标题、UP 主、话题或 BV 号。'}</p>` : '';
+  const creators = searchResult?.creators || [];
+  const preferred = creators.find(creator=>creator.id===searchResult?.preferredCreator);
+  const selectedCreator = creators.find(creator=>creator.id===searchFilter);
+  const shownCreators = searchFilter==='creators'?creators:selectedCreator?[selectedCreator]:
+    searchFilter==='all'&&preferred?[preferred]:[];
+  const primary = selectedCreator || (searchFilter==='all'?preferred:null);
+  const rendered = new Set(primary?.items.map(video=>video.id));
+  const videos = selectedCreator||searchFilter==='creators'?[]:state.items.filter(video=>!rendered.has(video.id));
+  const renderVideos = (items,label) => items.length
+    ? `<h2 class="bili-section-label">${H(label)}</h2><div class="bili-list bili-video-list">${cards(items,'search-video:')}</div>` : '';
+  const people = shownCreators.length ? `<h2 class="bili-section-label">UP 主</h2><div class="bili-search-people">
+    ${shownCreators.map(creator=>`<button type="button" class="bili-search-person" data-bili-id="search-creator:${H(creator.id)}"
+      aria-pressed="${creator.id===searchFilter}">${creator.avatar?`<img src="${H(creator.avatar)}" alt="" referrerpolicy="no-referrer">`:icon('user')}
+      <span>${H(creator.name)}</span></button>`).join('')}</div>` : '';
+  const matching = renderVideos(primary?.items||[],primary?primary.name+' 的视频':'');
+  const results = renderVideos(videos,searchResult?.kind==='id'?'对应视频':`${videos.length} 个视频结果`);
+  const empty = !state.busy&&!state.error&&!people&&!results
+    ? `<p class="bili-feed-empty">${state.query?'没有匹配结果。':'输入关键词、UP 主名称、BV 号或 AV 号。'}</p>` : '';
   return `<form id="bili-search-form" class="bili-search-box" role="search">
       <button class="bili-icon-button" data-bili-id="submit" type="submit" aria-label="提交搜索">${icon('search')}</button>
-      <input type="search" data-bili-id="query" aria-label="搜索视频" name="query" maxlength="80"
-        placeholder="搜索标题、UP 主或 BV 号" value="${H(state.query)}" autocomplete="off" spellcheck="false" enterkeyhint="search">
+      <input type="search" data-bili-id="query" aria-label="搜索视频" name="query" maxlength="256"
+        placeholder="关键词、UP 主、BV / AV 号" value="${H(state.query)}" autocomplete="off" spellcheck="false" enterkeyhint="search">
     </form>
     <div class="bili-glass-chips" aria-label="快捷搜索">${['动画','科技','学习','游戏','音乐'].map(q=>button('term:'+q,q)).join('')}</div>
-    <div class="bili-glass-chips bili-search-sources" aria-label="搜索范围">
-      ${button('live-search','B 站',`aria-pressed="${state.mode==='live'}"`)}
-      ${button('demo','本机片库',`aria-pressed="${state.mode==='demo'}"`)}
-    </div>
-    ${status()}${results}`;
+    ${searchResult&&searchResult.kind!=='id'?`<div class="bili-glass-chips bili-search-sources" aria-label="搜索结果类型">
+      ${[['all','综合'],['creators','UP 主'],['videos','视频']].map(([id,label])=>button('search-filter:'+id,label,
+        `aria-pressed="${searchFilter===id||id==='creators'&&!!selectedCreator}"`)).join('')}</div>`:''}
+    ${status()}${people}${matching}${results}${empty}`;
 }
 function details(){const v=selected(),pos=discovery.resume(v.id,state.history)?.finished?0:discovery.resume(v.id,state.history)?.position||0;return `${header('视频详情',v.mode==='demo'?'本地交互样片 · 非 B 站内容':'B 站视频')}<div class="bili-detail-art tone-${v.tone||'blue'}"><span>▶</span><small>${v.mode==='demo'?'LOCAL PLAYBACK TEST':H(v.id)}</small></div><h2 class="bili-title">${H(v.title)}</h2><p class="bili-author">${H(v.author)}</p><div class="bili-actions">${button('watch',pos>1?'继续播放 '+time(pos):'开始观看','data-focus-default')}${button('parts','选集 · '+(v.parts?.length||1))}${button('save-later',discovery.hasLater(v.id)?'取消稍后看':'稍后看',`aria-pressed="${discovery.hasLater(v.id)}"`)}</div><p class="bili-description">${H(v.description||'此视频暂未提供简介。')}</p>${status()}`}
 let danmakuItems = [], danmakuStatus = '', danmakuAt = 0;
@@ -949,9 +1010,24 @@ const baseRender=renderOS;renderOS=function(){if(media?.isConnected)media.remove
   }
  }}};
 
-function doSearch(q){state.query=String(q||'').trim().slice(0,80);if(!state.query){generation++;state.busy=false;state.items=[];state.error='';state.notice='';draw('query');return}state.route='search';if(state.mode==='live')loadSearch();else{state.items=discovery.search(state.query);state.error='';state.notice='来自本机片库';draw()}}
+function doSearch(q) {
+  state.query=String(q||'').normalize('NFKC').trim().slice(0,256);
+  searchFilter='all';
+  searchResult=null;
+  if (!state.query) {
+    generation++;
+    state.busy=false;
+    state.items=[];
+    state.error='';
+    state.notice='';
+    draw('query');
+    return;
+  }
+  state.route='search';
+  void loadSearch();
+}
 const click=osClick;osClick=async function(e){const b=e.target.closest('[data-bili-id]');if(!b||!active())return click(e);const id=b.dataset.biliId;if(b.matches('input,select,textarea,a')||id==='submit')return;
- if(id==='back')return back();if(id==='search'){if(state.route==='search'){focus('query');return}go('search',false);Object.assign(state,searchSession);draw('query');return}if(id==='connect'){
+ if(id==='back')return back();if(id==='search'){if(state.route==='search'){focus('query');return}go('search',false);Object.assign(state,searchSession);searchResult=lastSearchResult;searchFilter=lastSearchFilter;draw('query');return}if(id==='connect'){
   if(state.route==='connect')return;
   go('connect');
   const gen=generation;
@@ -969,7 +1045,12 @@ const click=osClick;osClick=async function(e){const b=e.target.closest('[data-bi
  if(id==='later')return shelf('稍后看',discovery.later().map(catalog));
  if(id==='topics'){if(state.route!=='topics')go('topics');return;}
  if(id.startsWith('topic:'))return openTopic(id.slice(6));
- if(id.startsWith('topic-video:')){const item=cardVideo(id);if(item)return detail(item.id,true,item);return;}
+ if(id.startsWith('topic-video:')||id.startsWith('search-video:')){const item=cardVideo(id);if(item)return detail(item.id,true,item);return;}
+ if(id.startsWith('search-filter:')||id.startsWith('search-creator:')){
+  searchFilter=id.split(':')[1];
+  draw(id);
+  return;
+ }
  if(id==='import')return go('import');
  if(id==='sample-shelf')return shelf('交互样片',samples);
  if(id==='menu-watch'){

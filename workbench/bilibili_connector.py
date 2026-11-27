@@ -1,13 +1,13 @@
 """Read-only Bilibili adapter for public videos and explicitly connected accounts."""
 import html,json,re,time,threading,urllib.request,urllib.parse,urllib.error
-import base64, hmac, os, secrets, shutil, zlib
+import base64, hmac, os, secrets, shutil, unicodedata, zlib
 from concurrent.futures import ThreadPoolExecutor
 import xml.etree.ElementTree as ET
 import bilibili_session
 _CACHE={};_LOCK=threading.Lock()
 class BiliUnavailable(Exception):pass
 def _request(resource,params):
- fresh = resource == 'x/web-interface/popular'
+ fresh = resource in ('x/web-interface/popular','x/web-interface/newlist')
  key=(resource,urllib.parse.urlencode(params))
  with _LOCK:
   hit=_CACHE.get(key)
@@ -32,7 +32,7 @@ def normalize(v):
  bvid=v.get('bvid','')
  if not re.fullmatch(r'BV[A-Za-z0-9]{10}',bvid):return None
  owner=v.get('owner') or {}
- return {'id':bvid,'cover':cover_url(v.get('pic')),'title':html.unescape(re.sub('<[^>]*>','',v.get('title',''))),'author':owner.get('name') or v.get('author',''),'description':v.get('desc') or v.get('description',''),'duration':v.get('duration',0),'topic':v.get('tname',''),'mode':'official','url':'https://www.bilibili.com/video/'+bvid,'parts':[{'page':p.get('page',1),'title':p.get('part',''),'cid':p.get('cid'),'cover':cover_url(p.get('first_frame'))} for p in v.get('pages',[])],'rights':{'mirror':False,'rate':False,'subtitle':False,'offline':False},'source':'Bilibili 游客接口（非开放平台稳定契约）','cid':v.get('cid')}
+ return {'id':bvid,'cover':cover_url(v.get('pic')),'title':html.unescape(re.sub('<[^>]*>','',v.get('title',''))),'author':owner.get('name') or v.get('author',''),'description':v.get('desc') or v.get('description',''),'duration':v.get('duration',0),'topic':v.get('tname') or v.get('typename',''),'mode':'official','url':'https://www.bilibili.com/video/'+bvid,'parts':[{'page':p.get('page',1),'title':p.get('part',''),'cid':p.get('cid'),'cover':cover_url(p.get('first_frame'))} for p in v.get('pages',[])],'rights':{'mirror':False,'rate':False,'subtitle':False,'offline':False},'source':'Bilibili 游客接口（非开放平台稳定契约）','cid':v.get('cid')}
 CATEGORY_START = 5
 CATEGORY_LAST = 12
 
@@ -80,6 +80,88 @@ def category_feed(query):
  return {'items':popular_items(pages,topic), 'nextPage':None if end>CATEGORY_LAST or pages[-1].get('no_more') else end}
 
 
+def region_feed(query):
+ rid = query.get('id',[''])[0]
+ page = query.get('page',['1'])[0]
+ if not re.fullmatch(r'[1-9][0-9]{0,3}',rid) or not re.fullmatch(r'[1-9][0-9]{0,3}',page):
+  raise ValueError('无效分区或页码')
+ data = _request('x/web-interface/newlist',{'rid':int(rid),'pn':int(page),'ps':10})
+ archives = data.get('archives') or []
+ return {'items':popular_items([{'list':archives}]),'nextPage':int(page)+1 if len(archives)==10 and int(page)<9999 else None}
+
+
+def bvid_from_aid(aid):
+ alphabet = 'FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf'
+ value = ((1 << 51) | aid) ^ 23442827791579
+ encoded = list('BV1000000000')
+ for index in range(11,2,-1):
+  value, digit = divmod(value,58)
+  encoded[index] = alphabet[digit]
+ encoded[3], encoded[9] = encoded[9], encoded[3]
+ encoded[4], encoded[7] = encoded[7], encoded[4]
+ return ''.join(encoded)
+
+
+def video_number(query):
+ url = urllib.parse.urlsplit(query)
+ if url.scheme in ('https','http') and url.hostname in ('www.bilibili.com','bilibili.com') and url.path.startswith('/video/'):
+  query = url.path.strip('/').split('/')[-1]
+ if re.fullmatch(r'(?i:BV)[A-Za-z0-9]{10}',query):
+  return 'BV'+query[2:]
+ if re.fullmatch(r'(?i:av)[1-9][0-9]{0,15}',query) and int(query[2:]) < 1 << 51:
+  return bvid_from_aid(int(query[2:]))
+ return None
+
+
+def search_video_id(ident):
+ try:
+  item = normalize(_request('x/web-interface/view',{'bvid':ident}))
+  if item:
+   return item
+ except BiliUnavailable:
+  pass
+ parts = _request('x/player/pagelist',{'bvid':ident})
+ if not parts:
+  raise ValueError('没有找到该视频')
+ first = parts[0]
+ return normalize({'bvid':ident,'title':first.get('part') or ident,
+                   'duration':first.get('duration',0),'cid':first.get('cid'),'pages':parts})
+
+
+def search_feed(raw_query):
+ q = unicodedata.normalize('NFKC',raw_query.strip())
+ if not q or len(q)>256:
+  raise ValueError('请输入关键词')
+ ident = video_number(q)
+ if ident:
+  return {'kind':'id','items':[search_video_id(ident)],'creators':[]}
+
+ response = _request('x/web-interface/search/all/v2',{'keyword':q.lstrip('@').strip()[:80]})
+ if not isinstance(response,dict) or not isinstance(response.get('result'),list):
+  raise BiliUnavailable('B 站搜索暂不可用，请稍后重试。')
+ groups = {entry.get('result_type'):entry.get('data') or [] for entry in response['result']}
+ videos = [v for v in groups.get('video',[]) if v.get('bvid')]
+ items = popular_items([{'list':videos}])
+ creators = []
+ for user in groups.get('bili_user',[])[:6]:
+  uid = user.get('mid')
+  name = user.get('uname')
+  if not isinstance(uid,int) or not name:
+   continue
+  matches = [v for v in videos if str(v.get('mid'))==str(uid)]
+  name = html.unescape(re.sub('<[^>]*>','',name))
+  picks = [{**v,'author':name} for v in user.get('res') or []]
+  creators.append({'id':str(uid),'name':name,
+                   'avatar':cover_url(user.get('upic')),'items':popular_items([{'list':picks+matches}])[:12]})
+
+ term = q.lstrip('@').casefold()
+ exact = next((u for u in creators if u['name'].casefold()==term),None)
+ suffix = next((u for u in creators if len(term)>=3 and u['name'].casefold().endswith(term)),None)
+ preferred = exact or suffix or (creators[0] if q.startswith('@') and creators else None)
+ return {'kind':'creator' if preferred else 'keyword','items':items[:20],
+         'creators':creators,'preferredCreator':preferred['id'] if preferred else None}
+
+
 def route(path,query):
  if path=='/api/bilibili/capabilities':return {'provider':'guest-readonly','accountConnected':False,'discovery':True,'search':True,'detail':True,'playback':'public-dash-mp4-with-embed-fallback','nativeControls':False,'offline':False,'reason':'官方嵌入的跨域媒体控制未获可用协议；本地样片可验证焦点、镜像、倍速、字幕和离线。'}
  if path=='/api/bilibili/play':return playback(query)
@@ -89,13 +171,11 @@ def route(path,query):
   return {'parts':[{'page':p.get('page'), 'cid':p.get('cid'), 'title':p.get('part', ''), 'cover':cover_url(p.get('first_frame'))} for p in _request('x/player/pagelist',{'bvid':ident})]}
  if path=='/api/bilibili/home':return home_feed()
  if path=='/api/bilibili/category':return category_feed(query)
+ if path=='/api/bilibili/region':return region_feed(query)
  if path=='/api/bilibili/related':
   ident=video_id(query)
   vs=[v for v in _request('x/web-interface/archive/related',{'bvid':ident}) if v.get('bvid')!=ident][:20]
- elif path=='/api/bilibili/search':
-  q=query.get('q',[''])[0].strip()[:80]
-  if not q:raise ValueError('请输入关键词')
-  d=_request('x/web-interface/search/type',{'search_type':'video','keyword':q,'page':1});vs=d.get('result',[])[:12]
+ elif path=='/api/bilibili/search':return search_feed(query.get('q',[''])[0])
  elif path=='/api/bilibili/video':
   ident=query.get('id',[''])[0]
   if not re.fullmatch(r'BV[A-Za-z0-9]{10}',ident):raise ValueError('无效 BV 号')

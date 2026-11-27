@@ -255,3 +255,7 @@
 .os-display .bili-topic-detail .bili-topic-heading button{min-height:38px;padding:5px;background:transparent!important}
 .os-display .bili-topic-detail .bili-topic-status{min-height:30px;padding:5px 0}
 .os-display .bili-topic-detail .bili-topic-status:empty{display:block}
+.os-display .bili-search-people{display:flex;gap:10px;overflow-x:auto;padding:4px var(--glass-pad) 8px;scrollbar-width:none}
+.os-display .bili-app button.bili-search-person{min-height:54px;gap:10px;flex:none;max-width:100%;padding:7px 14px 7px 8px;border-radius:999px;font-size:16px;background:#1e2026!important}
+.os-display .bili-search-person :is(img,svg){width:36px;height:36px;border-radius:50%;object-fit:cover;flex:none}
+.os-display .bili-search-person span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

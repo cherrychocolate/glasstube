@@ -280,3 +280,7 @@
 .os-display .bili-app .bili-short-retry{position:absolute;z-index:3;top:56%;left:50%;transform:translateX(-50%);min-height:38px;padding:6px 14px;border-radius:99px;font-size:15px;white-space:nowrap}
 .os-display .bili-short-speed{position:absolute;z-index:2;top:18%;left:50%;transform:translateX(-50%);border-radius:99px;background:#000b;color:#fff;padding:6px 14px;pointer-events:none}
 @media(max-width:420px){.os-display .bili-browsing .bili-section-bar{gap:2px}.os-display .bili-browsing .bili-section-bar button{font-size:clamp(10px,3vw,13px);padding-inline:2px}}
+.os-display .bili-short-toasts{position:absolute;z-index:4;top:16px;inset-inline:16px;display:grid;justify-items:center;gap:6px;pointer-events:none}
+.os-display .bili-shorts-nav:not([hidden])+.bili-shorts-view .bili-short-toasts{top:84px}
+.os-display .bili-short-toast{width:max-content;max-width:100%;margin:0;padding:7px 14px;border-radius:999px;background:#fb7299;color:#17090e;font-size:15px;font-weight:600;text-align:center}
+.os-display .bili-short-toast:empty{display:none}

@@ -70,7 +70,7 @@ function draw(defaultID){
     if(target)focus(target.dataset.biliId);
   });
 }
-function go(route, render = true, origin){if(shortRoute()&&route!=='shorts'){clearTimeout(shortsNavTimer);endShortGesture();if(media?.tagName==='VIDEO')saveProgress(media,selected().id,1);}if(state.route==='search'){const {query,mode,items,error,notice}=state;searchSession={query,mode,items,error,notice};lastSearchResult=searchResult;lastSearchFilter=searchFilter;}generation++;state.busy=false;remember();stack.push({focus:origin||focusMemory.get(scope()),route:state.route,selected:state.selected,part:state.part,items:state.items,query:state.query,mode:state.mode,offline:state.offline,viewTitle,stream,searchResult,searchFilter,folders:state.folders,error:state.error,notice:state.notice});state.route=route;state.panel='';state.error='';state.notice='';if(route!=='player')media?.pause?.();if(render)draw();}
+function go(route, render = true, origin){if(shortRoute()&&route!=='shorts'){clearTimeout(shortsNavTimer);shortToast('');shortToast('','intro');endShortGesture();if(media?.tagName==='VIDEO')saveProgress(media,selected().id,1);}if(state.route==='search'){const {query,mode,items,error,notice}=state;searchSession={query,mode,items,error,notice};lastSearchResult=searchResult;lastSearchFilter=searchFilter;}generation++;state.busy=false;remember();stack.push({focus:origin||focusMemory.get(scope()),route:state.route,selected:state.selected,part:state.part,items:state.items,query:state.query,mode:state.mode,offline:state.offline,viewTitle,stream,searchResult,searchFilter,folders:state.folders,error:state.error,notice:state.notice});state.route=route;state.panel='';state.error='';state.notice='';if(route!=='player')media?.pause?.();if(render)draw();}
 function back(){if(!active())return false;if(shortRoute())return shortBack();if(immersive&&!state.panel){setImmersive(false);return true;}if(state.panel){if(state.panel==='danmaku'){state.panel='danmaku-options';draw('danmaku');return true}if(state.panel==='login')stopPoll();if(state.panel==='library-tools'){state.panel='';draw('library-tools');return true;}if(state.panel==='danmaku-options'){state.panel='settings';draw('danmaku-options');return true;}state.panel='';draw(focusMemory.get(scope())||'settings');return true}if(stack.length){if(state.route==='player'&&!state.busy&&media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);generation++;state.busy=false;remember();media?.pause?.();const {focus:origin,searchResult:previousSearch,searchFilter:previousFilter,...previous}=stack.pop();Object.assign(state,previous);viewTitle=previous.viewTitle;stream=previous.stream;searchResult=previousSearch;searchFilter=previousFilter;draw(origin);return true}osNavigate('center');return true}
 function showPanel(panel, initialFocus){remember();state.panel=panel;draw(initialFocus)}
 async function request(path,post=false){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),9500);try{const r=await fetch('/api/bilibili/'+path,{signal:controller.signal,cache:'no-store',...(post?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{})});const d=await r.json();if(!r.ok)throw Error(d.error||'读取失败');return d}finally{clearTimeout(timer)}}
@@ -211,6 +211,16 @@ const shortRoute = () => state.route==='shorts';
 const playingRoute = () => state.route==='player'||shortRoute();
 let shorts = {items:[],index:-1,page:1};
 let shortsNavTimer, shortGesture, skipShortClickUntil=0;
+const shortsToastTimers = new Map();
+
+function shortToast(message, kind='hint') {
+  clearTimeout(shortsToastTimers.get(kind));
+  shorts[kind]=message;
+  const toast=document.querySelector('[data-short-toast="'+kind+'"]');
+  if(toast)toast.textContent=message;
+  if(message)shortsToastTimers.set(kind,setTimeout(()=>shortToast('',kind),5000));
+  else shortsToastTimers.delete(kind);
+}
 
 function shortNavigation(show) {
   shorts.nav=show;
@@ -218,15 +228,21 @@ function shortNavigation(show) {
   const nav=document.querySelector('.bili-shorts-nav');
   if(nav) nav.hidden=!show;
   if(show) {
+    shortToast('');
     focus('shorts');
     shortsNavTimer=setTimeout(()=>{
-      if(shortRoute())shortNavigation(false);
+      if(shortRoute()) {
+        shortNavigation(false);
+        shortToast('按 Esc 唤醒导航栏');
+      }
     },5000);
   } else if(nav?.contains(document.activeElement)) focus('short-stage');
 }
 function shortMenu(show) {
   shortNavigation(false);
   shorts.menu=show;
+  if(show)shortToast('','intro');
+  shortToast(show?'按 Esc 隐藏功能菜单':'按 Esc 唤醒导航栏');
   const menu=document.querySelector('.bili-short-menu');
   if(menu) menu.hidden=!show;
   document.querySelector('[data-bili-id="short-stage"]')?.setAttribute('aria-expanded',String(show));
@@ -330,6 +346,10 @@ function shortsView() {
         }).join(''):''}
       </aside>
       <span class="bili-short-speed" hidden>2×</span>
+      <div class="bili-short-toasts">
+        <p class="bili-short-toast" data-short-toast="intro" role="status">${H(shorts.intro||'')}</p>
+        <p class="bili-short-toast" data-short-toast="hint" role="status">${H(shorts.hint||'')}</p>
+      </div>
     </div>`;
 }
 function startShortGesture(target, event) {
@@ -1140,7 +1160,13 @@ async function mountMedia(){const mount=document.querySelector('.bili-media-moun
   release();stream=null;state.notice='此视频的实际画面不符合竖屏条件。';
   draw('short-stage');void moveShort(1);return;
  }
- if(shortRoute())video.classList.add('bili-short-portrait');
+ if(shortRoute()){
+  video.classList.add('bili-short-portrait');
+  if(!shorts.introShown){
+   shorts.introShown=true;
+   if(!shorts.menu)shortToast('单击画面打开功能菜单','intro');
+  }
+ }
  const recent=discovery.resume(v.id,state.history);const old=recent?.parts?.[partAtMount] || ((!recent?.part||recent.part===partAtMount)?recent:null);const position=old&&!old.finished?old.position:0;video.currentTime=Number.isFinite(position)&&position<video.duration-1?position:0;applySettings();if(autoStart){autoStart=false;video.play().catch(()=>{});}};media.ontimeupdate=updateMedia;media.onplay=updateMedia;
  const playbackStatus = text => {
    const el = document.querySelector('#bili-play-status');

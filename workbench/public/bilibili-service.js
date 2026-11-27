@@ -822,19 +822,7 @@ document.addEventListener('keydown',event=>{
   if(!['ArrowUp','ArrowDown'].includes(event.key)||state.panel) return;
   const row=event.target.closest?.('.bili-video-list .bili-video-card');
   const up=event.key==='ArrowUp';
-  const rows=row?[...scrollArea().querySelectorAll('.bili-video-list .bili-video-card')]:[];
-  let adjacent=row?rows[rows.indexOf(row)+(up?-1:1)]:null;
-  const shelf=up&&event.target.closest?.('.bili-track .bili-video-card')?.closest('.bili-glass-shelf');
-  if(shelf){
-    const shelves=[...scrollArea().querySelectorAll('.bili-glass-shelf')].filter(section=>section.querySelector('.bili-track .bili-video-card'));
-    const prior=shelves[shelves.indexOf(shelf)-1];
-    if(prior){
-      const center=element=>{const bounds=element.getBoundingClientRect();return bounds.left+bounds.width/2;};
-      const x=center(event.target);
-      adjacent=[...prior.querySelectorAll('.bili-track .bili-video-card')]
-        .reduce((best,card)=>Math.abs(center(card)-x)<Math.abs(center(best)-x)?card:best);
-    }
-  }
+  const adjacent=!(up&&row?.closest('.bili-browse-scroll'))&&(up?row?.previousElementSibling:row?.nextElementSibling);
   if(adjacent){
     event.preventDefault();
     event.stopImmediatePropagation();

@@ -44,6 +44,9 @@ const icons = {
   user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   fullscreen:'<path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"/>',
   minimize:'<path d="M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"/>',
+  up:'<path d="m5 15 7-7 7 7"/>',
+  down:'<path d="m5 9 7 7 7-7"/>',
+  bookmark:'<path d="M6 4h12v16l-6-4-6 4z"/>',
   history:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
 };
 function icon(name) {
@@ -67,8 +70,8 @@ function draw(defaultID){
     if(target)focus(target.dataset.biliId);
   });
 }
-function go(route, render = true, origin){if(state.route==='search'){const {query,mode,items,error,notice}=state;searchSession={query,mode,items,error,notice};lastSearchResult=searchResult;lastSearchFilter=searchFilter;}generation++;state.busy=false;remember();stack.push({focus:origin||focusMemory.get(scope()),route:state.route,selected:state.selected,part:state.part,items:state.items,query:state.query,mode:state.mode,offline:state.offline,viewTitle,stream,searchResult,searchFilter,folders:state.folders,error:state.error,notice:state.notice});state.route=route;state.panel='';state.error='';state.notice='';if(route!=='player')media?.pause?.();if(render)draw();}
-function back(){if(!active())return false;if(immersive&&!state.panel){setImmersive(false);return true;}if(state.panel){if(state.panel==='danmaku'){state.panel='danmaku-options';draw('danmaku');return true}if(state.panel==='login')stopPoll();if(state.panel==='library-tools'){state.panel='';draw('library-tools');return true;}if(state.panel==='danmaku-options'){state.panel='settings';draw('danmaku-options');return true;}state.panel='';draw(focusMemory.get(scope())||'settings');return true}if(stack.length){if(state.route==='player'&&!state.busy&&media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);generation++;state.busy=false;remember();media?.pause?.();const {focus:origin,searchResult:previousSearch,searchFilter:previousFilter,...previous}=stack.pop();Object.assign(state,previous);viewTitle=previous.viewTitle;stream=previous.stream;searchResult=previousSearch;searchFilter=previousFilter;draw(origin);return true}osNavigate('center');return true}
+function go(route, render = true, origin){if(shortRoute()&&route!=='shorts'){clearTimeout(shortsNavTimer);endShortGesture();if(media?.tagName==='VIDEO')saveProgress(media,selected().id,1);}if(state.route==='search'){const {query,mode,items,error,notice}=state;searchSession={query,mode,items,error,notice};lastSearchResult=searchResult;lastSearchFilter=searchFilter;}generation++;state.busy=false;remember();stack.push({focus:origin||focusMemory.get(scope()),route:state.route,selected:state.selected,part:state.part,items:state.items,query:state.query,mode:state.mode,offline:state.offline,viewTitle,stream,searchResult,searchFilter,folders:state.folders,error:state.error,notice:state.notice});state.route=route;state.panel='';state.error='';state.notice='';if(route!=='player')media?.pause?.();if(render)draw();}
+function back(){if(!active())return false;if(shortRoute())return shortBack();if(immersive&&!state.panel){setImmersive(false);return true;}if(state.panel){if(state.panel==='danmaku'){state.panel='danmaku-options';draw('danmaku');return true}if(state.panel==='login')stopPoll();if(state.panel==='library-tools'){state.panel='';draw('library-tools');return true;}if(state.panel==='danmaku-options'){state.panel='settings';draw('danmaku-options');return true;}state.panel='';draw(focusMemory.get(scope())||'settings');return true}if(stack.length){if(state.route==='player'&&!state.busy&&media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);generation++;state.busy=false;remember();media?.pause?.();const {focus:origin,searchResult:previousSearch,searchFilter:previousFilter,...previous}=stack.pop();Object.assign(state,previous);viewTitle=previous.viewTitle;stream=previous.stream;searchResult=previousSearch;searchFilter=previousFilter;draw(origin);return true}osNavigate('center');return true}
 function showPanel(panel, initialFocus){remember();state.panel=panel;draw(initialFocus)}
 async function request(path,post=false){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),9500);try{const r=await fetch('/api/bilibili/'+path,{signal:controller.signal,cache:'no-store',...(post?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{})});const d=await r.json();if(!r.ok)throw Error(d.error||'读取失败');return d}finally{clearTimeout(timer)}}
 async function loadSearch() {
@@ -204,14 +207,223 @@ async function detail(id, direct = false, recommendation, replace = false) {
   if(direct)return watchVideo(false,true);
   draw();
 }
+const shortRoute = () => state.route==='shorts';
+const playingRoute = () => state.route==='player'||shortRoute();
+let shorts = {items:[],index:-1,page:1};
+let shortsNavTimer, shortGesture, skipShortClickUntil=0;
+
+function shortNavigation(show) {
+  shorts.nav=show;
+  clearTimeout(shortsNavTimer);
+  const nav=document.querySelector('.bili-shorts-nav');
+  if(nav) nav.hidden=!show;
+  if(show) {
+    focus('shorts');
+    shortsNavTimer=setTimeout(()=>{
+      if(shortRoute())shortNavigation(false);
+    },5000);
+  } else if(nav?.contains(document.activeElement)) focus('short-stage');
+}
+function shortMenu(show) {
+  shortNavigation(false);
+  shorts.menu=show;
+  const menu=document.querySelector('.bili-short-menu');
+  if(menu) menu.hidden=!show;
+  document.querySelector('[data-bili-id="short-stage"]')?.setAttribute('aria-expanded',String(show));
+  if(show) {
+    const first=menu?.querySelector('[data-bili-id="short-next"]:not(:disabled)')||menu?.querySelector('button:not(:disabled)');
+    focus(first?.dataset.biliId||'short-stage');
+  } else focus('short-stage');
+}
+function shortBack() {
+  endShortGesture();
+  if(shorts.menu)shortMenu(false);
+  else shortNavigation(true);
+  return true;
+}
+function currentShort() {
+  return shorts.items[shorts.index];
+}
+async function openShorts() {
+  go('shorts',false);
+  release();
+  stream=null;
+  shorts={items:[],index:-1,page:1,nav:true,menu:false};
+  state.notice='';
+  draw('shorts');
+  shortNavigation(true);
+  await moveShort(1);
+}
+async function moveShort(step) {
+  const feed=shorts;
+  if(!shortRoute()||feed.loading) return;
+  const next=feed.index+step;
+  if(next<0)return;
+  if(next>=feed.items.length&&feed.page!==null) {
+    feed.loading=true;
+    showShortStatus('正在加载短视频…');
+    try {
+      while(next>=feed.items.length&&feed.page!==null) {
+        const result=await request('shorts?page='+feed.page);
+        if(!shortRoute()||shorts!==feed)return;
+        const existing=new Set(feed.items.map(video=>video.id));
+        for(const video of result.items) {
+          if(existing.has(video.id))continue;
+          existing.add(video.id);
+          feed.items.push(video);
+        }
+        feed.page=Number.isInteger(result.nextPage)&&result.nextPage>feed.page?result.nextPage:null;
+      }
+    } catch {
+      showShortStatus('短视频暂时无法加载。');
+      return;
+    } finally { feed.loading=false; }
+  }
+  if(!shortRoute()||shorts!==feed)return;
+  if(next>=feed.items.length){showShortStatus('没有更多短视频。');return;}
+  endShortGesture();
+  if(media?.tagName==='VIDEO'&&currentShort())saveProgress(media,currentShort().id,1);
+  feed.index=next;
+  state.selected=currentShort();
+  state.part=1;
+  state.offline=false;
+  await watchVideo(false,true);
+}
+function showShortStatus(message) {
+  const status=document.querySelector('#bili-play-status');
+  if(status) status.textContent=message;
+}
+const shortActions = [
+  ['short-like','heart','喜欢','取消喜欢',video=>discovery.hasLike(video.id),video=>discovery.toggleLike(video)],
+  ['short-save','bookmark','收藏','取消收藏',video=>discovery.hasFavorite(video.id),video=>discovery.toggleFavorite(video)],
+  ['short-follow','user','关注','取消关注',video=>discovery.follows(video.creatorId),video=>discovery.toggleFollow(video.creatorId)]
+];
+function shortAction(action, button) {
+  const video=currentShort();
+  if(!video||action[0]==='short-follow'&&!video.creatorId)return;
+  try { action[5](video); }
+  catch { showShortStatus('浏览器未能保存此操作。');return; }
+  const isOn=action[4](video);
+  button.setAttribute('aria-pressed',String(isOn));
+  button.setAttribute('aria-label',isOn?action[3]:action[2]);
+  button.title=isOn?action[3]:action[2];
+}
+function shortsView() {
+  const video=currentShort();
+  const failure=video&&!state.busy&&!stream;
+  return `<div class="bili-shorts-nav" ${shorts.nav?'':'hidden'}>${sectionBar('shorts')}</div>
+    <div class="bili-shorts-view" role="region" aria-label="短视频播放器">
+      <div class="bili-media-mount"></div>
+      <button class="bili-short-stage" data-bili-id="short-stage" data-focus-default type="button"
+        aria-label="显示短视频操作" aria-controls="bili-short-menu" aria-expanded="${!!shorts.menu}"></button>
+      <p class="bili-short-status" id="bili-play-status" role="status">${state.busy?'正在加载…':failure?H(state.notice):''}</p>
+      ${failure?button('short-retry','重试播放','class="bili-short-retry"'):''}
+      ${!video?button('short-reload','加载短视频','class="bili-short-retry"'):''}
+      ${video?`<div class="bili-short-info"><strong>${H(video.author)}</strong><h1>${H(video.title)}</h1>
+        <progress id="bili-progress-bar" max="1" value="0" aria-label="播放进度"></progress></div>`:''}
+      <aside id="bili-short-menu" class="bili-short-menu" aria-label="短视频操作" ${shorts.menu?'':'hidden'}>
+        ${iconButton('short-prev','上一条','up',shorts.index<=0?'disabled':'')}
+        ${iconButton('short-next','下一条','down',shorts.index+1>=shorts.items.length&&shorts.page===null?'disabled':'')}
+        ${video?shortActions.map(([id,symbol,off,on,active])=>{
+          const unavailable=id==='short-follow'&&!video.creatorId;
+          return iconButton(id,active(video)?on:off,symbol,`aria-pressed="${active(video)}" ${unavailable?'disabled':''}`);
+        }).join(''):''}
+      </aside>
+      <span class="bili-short-speed" hidden>2×</span>
+    </div>`;
+}
+function startShortGesture(target, event) {
+  if(shorts.menu)return;
+  endShortGesture();
+  const gesture={target,pointer:event.pointerId,x:event.clientX,y:event.clientY};
+  gesture.timer=setTimeout(()=>{
+    if(!shortRoute()||shortGesture!==gesture||media?.tagName!=='VIDEO')return;
+    gesture.video=media;
+    gesture.rate=media.playbackRate;
+    media.playbackRate=2;
+    const indicator=document.querySelector('.bili-short-speed');
+    if(indicator)indicator.hidden=false;
+  },450);
+  shortGesture=gesture;
+}
+function endShortGesture() {
+  if(!shortGesture)return null;
+  const gesture=shortGesture;
+  clearTimeout(gesture.timer);
+  if(gesture.video===media&&media)media.playbackRate=gesture.rate;
+  const indicator=document.querySelector('.bili-short-speed');
+  if(indicator)indicator.hidden=true;
+  shortGesture=null;
+  return gesture;
+}
+function shortSwipe(dx,dy) {
+  if(Math.abs(dy)>Math.abs(dx))void moveShort(dy<0?1:-1);
+  else if(!shorts.menu)skip(dx<0?'rewind':'forward');
+}
+document.addEventListener('pointerdown',event=>{
+  const stage=event.target.closest?.('.bili-short-stage');
+  if(!shortRoute()||!stage||event.button!==0)return;
+  if(shorts.menu) {
+    endShortGesture();
+    shortGesture={target:stage,pointer:event.pointerId,x:event.clientX,y:event.clientY};
+  } else startShortGesture(stage,event);
+  stage.setPointerCapture(event.pointerId);
+});
+document.addEventListener('pointermove',event=>{
+  const g=shortGesture;
+  if(g?.pointer===event.pointerId&&(Math.abs(event.clientX-g.x)>10||Math.abs(event.clientY-g.y)>10))clearTimeout(g.timer);
+});
+document.addEventListener('pointerup',event=>{
+  if(shortGesture?.pointer!==event.pointerId)return;
+  const gesture=endShortGesture();
+  const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;
+  if(gesture.video||Math.max(Math.abs(dx),Math.abs(dy))>35) {
+    skipShortClickUntil=performance.now()+400;
+    if(!gesture.video)shortSwipe(dx,dy);
+  }
+});
+document.addEventListener('pointercancel',event=>{
+  if(shortGesture?.pointer===event.pointerId)endShortGesture();
+});
+window.addEventListener('blur',endShortGesture);
+document.addEventListener('wheel',event=>{
+  if(!shortRoute()||!event.target.closest?.('.bili-shorts-view')||Math.abs(event.deltaY)<15)return;
+  if(performance.now()<(shorts.wheelAt||0)+450)return;
+  shorts.wheelAt=performance.now();
+  void moveShort(event.deltaY>0?1:-1);
+},{passive:true});
+document.addEventListener('contextmenu',event=>{
+  if(shortRoute()&&event.target.closest?.('.bili-short-stage'))event.preventDefault();
+});
+document.addEventListener('keydown',event=>{
+  if(!shortRoute()||event.target.closest?.('.bili-shorts-nav,.bili-short-menu'))return;
+  if(event.key==='Enter'&&event.target.matches?.('.bili-short-stage')) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if(!event.repeat&&!shorts.menu)startShortGesture(event.target,event);
+    return;
+  }
+  if(shorts.menu||!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key))return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if(event.key==='ArrowUp'||event.key==='ArrowDown') {
+    if(!event.repeat)void moveShort(event.key==='ArrowDown'?1:-1);
+  } else skip(event.key==='ArrowLeft'?'rewind':'forward');
+},true);
+document.addEventListener('keyup',event=>{
+  if(event.key!=='Enter'||!shortRoute()||!shortGesture||shortGesture.pointer!==undefined)return;
+  const gesture=endShortGesture();
+  if(!gesture.video)gesture.target.click();
+});
+
 let autoStart = false;
 let immersive = false;
 async function watchVideo(preferMp4 = false, autoplay = false) {
-  if (state.route !== 'player') go('player',false);
+  if (!playingRoute()) go('player',false);
   else remember();
   autoStart = autoplay;
   state.notice = '';
-  if (state.route==='player' && selected().mode!=='demo') release();
+  if (playingRoute() && selected().mode!=='demo') release();
   stream = null;
   if (selected().mode === 'demo') { draw('toggle'); return; }
   const gen = ++generation;
@@ -228,7 +440,8 @@ async function watchVideo(preferMp4 = false, autoplay = false) {
   } finally {
     if (gen === generation) {
       state.busy = false;
-      draw(state.panel ? undefined : stream ? 'toggle' : 'retry-play');
+      if(shortRoute())draw(shorts.menu?'short-next':shorts.nav?'shorts':'short-stage');
+      else draw(state.panel ? undefined : stream ? 'toggle' : 'retry-play');
     }
   }
 }
@@ -389,7 +602,7 @@ function currentSection() {
   return ({home:'recent',featured:'featured',topics:'topics',connect:'connect',search:'search'})[state.route];
 }
 function sectionBar(selectedTab) {
-  const tabs=[['recent','首页'],['featured','为你推荐'],['topics','主题'],['connect','片库'],['search','搜索']];
+  const tabs=[['shorts','短视频'],['recent','首页'],['featured','为你推荐'],['topics','主题'],['connect','片库'],['search','搜索']];
   return `<nav class="bili-section-bar" aria-label="B 站服务">
     ${tabs.map(([id,label])=>button(id,label,id===selectedTab?'aria-current="page" data-focus-default':'')).join('')}
   </nav>`;
@@ -886,6 +1099,7 @@ function connect() {
   const collections = [
     ['later','稍后观看',discovery.later(),'长按任意视频即可加入稍后观看。'],
     ['liked','已点赞',discovery.liked(),'在播放器中点赞的视频会出现在这里。'],
+    ...(discovery.favorites().length?[['favorites','已收藏',discovery.favorites(),'']]:[]),
     ['history','观看历史',history,'还没有观看记录。']
   ];
   return collections.map(([key,title,ids,empty])=>{
@@ -901,6 +1115,7 @@ function webImport() {
   </form><p class="bili-note" id="bili-web-import-note" role="status"></p>`;
 }
 function render(){
+  if(shortRoute())return `<section class="bili-app bili-browsing bili-shorts" data-route="shorts"><div class="bili-body">${shortsView()}</div></section>`;
   const section=currentSection();
   const screen=({home,featured,search,detail:details,player,cache:cacheView,connect,shelf:shelfView,topics:topicsView,topic:topicView,import:importView,cloud:cloudView,webImport})[state.route]();
   const content=section?`${sectionBar(section)}<div class="bili-browse-scroll">${screen}</div>
@@ -927,12 +1142,18 @@ function saveProgress(video,id,part) {
   persist();
 }
 window.addEventListener('pagehide',()=>{
-  if(state.route==='player' && !state.busy && media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);
+  if(playingRoute() && !state.busy && media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);
 });
 function release(){clearOverlay();if(dashPlayer){const previous=dashPlayer;dashPlayer=null;previous.reset()}media?.pause?.();if(mediaURL)URL.revokeObjectURL(mediaURL);mediaURL='';media=null;mediaID=''}
 function applySettings(){if(!media||media.tagName!=='VIDEO')return;media.playbackRate=state.rate;media.classList.toggle('bili-mirrored',state.mirror);for(const track of media.textTracks)track.mode='hidden';updateMedia()}
-function updateMedia(){if(!active()||state.route!=='player'||state.busy||!media||media.tagName!=='VIDEO')return;const t=media.currentTime||0;const bar=document.querySelector('#bili-progress-bar');if(bar)bar.value=Number.isFinite(media.duration)&&media.duration>0?t/media.duration:0;const timer=document.querySelector('#bili-time');if(timer)timer.textContent=time(t)+' / '+time(media.duration||selected().duration||30);const play=document.querySelector('[data-bili-id="toggle"]');if(play&&play.dataset.paused!==String(media.paused)){play.dataset.paused=String(media.paused);play.innerHTML=icon(media.paused?'play':'pause');play.title=media.paused?'播放':'暂停'}updateOverlay();const caps=document.querySelector('#bili-captions');if(caps){const cues=['本地交互样片 · 非 B 站视频','镜像仅反转画面，字幕保持可读','方向键移焦 · 确认执行 · 返回退出','倍速、字幕与离线可在本地验证'];const caption=stream?stream.captionCues.find(c=>c.from<=t&&c.to>t)?.text:cues[t<7?0:t<15?1:t<23?2:3];caps.textContent=state.subtitle?(caption||''):'';caps.hidden=!caps.textContent}if(Date.now()-lastSave>1500){lastSave=Date.now();saveProgress(media,selected().id,state.part)}}
-async function mountMedia(){const mount=document.querySelector('.bili-media-mount');if(!mount||state.busy)return;const v=selected();if(v.mode!=='demo'&&!stream)return;const id=v.id+':'+state.part+':'+state.offline+':'+(stream?.manifest||stream?.src||'');if(mediaID!==id){release();mediaID=id;media=document.createElement('video');media.playsInline=true;media.preload='metadata';media.setAttribute('aria-label',stream?'B 站视频画面':'本地交互样片画面');media.tabIndex=-1;const expected=id;if(state.offline){try{const item=await transaction('readonly',s=>s.get(v.id));if(mediaID!==expected)return;if(!item?.blob?.size)throw Error('缓存文件不存在，请重新保存');mediaURL=URL.createObjectURL(item.blob);media.src=mediaURL}catch(e){const el=document.querySelector('#bili-media-error');if(el){el.hidden=false;el.textContent=e.message}return}}else if(!stream?.manifest)media.src=stream?.src||DEMO;media.volume=(osData?.settings?.volume??60)/100;const video=media, partAtMount=state.part;media.onended=()=>saveProgress(video,v.id,partAtMount);media.onloadedmetadata=()=>{const recent=discovery.resume(v.id,state.history);const old=recent?.parts?.[partAtMount] || ((!recent?.part||recent.part===partAtMount)?recent:null);const position=old&&!old.finished?old.position:0;video.currentTime=Number.isFinite(position)&&position<video.duration-1?position:0;applySettings();if(autoStart){autoStart=false;video.play().catch(()=>{});}};media.ontimeupdate=updateMedia;media.onplay=updateMedia;
+function updateMedia(){if(!active()||!playingRoute()||state.busy||!media||media.tagName!=='VIDEO')return;const t=media.currentTime||0;const bar=document.querySelector('#bili-progress-bar');if(bar)bar.value=Number.isFinite(media.duration)&&media.duration>0?t/media.duration:0;const timer=document.querySelector('#bili-time');if(timer)timer.textContent=time(t)+' / '+time(media.duration||selected().duration||30);const play=document.querySelector('[data-bili-id="toggle"]');if(play&&play.dataset.paused!==String(media.paused)){play.dataset.paused=String(media.paused);play.innerHTML=icon(media.paused?'play':'pause');play.title=media.paused?'播放':'暂停'}updateOverlay();const caps=document.querySelector('#bili-captions');if(caps){const cues=['本地交互样片 · 非 B 站视频','镜像仅反转画面，字幕保持可读','方向键移焦 · 确认执行 · 返回退出','倍速、字幕与离线可在本地验证'];const caption=stream?stream.captionCues.find(c=>c.from<=t&&c.to>t)?.text:cues[t<7?0:t<15?1:t<23?2:3];caps.textContent=state.subtitle?(caption||''):'';caps.hidden=!caps.textContent}if(Date.now()-lastSave>1500){lastSave=Date.now();saveProgress(media,selected().id,state.part)}}
+async function mountMedia(){const mount=document.querySelector('.bili-media-mount');if(!mount||state.busy)return;const v=selected();if(v.mode!=='demo'&&!stream)return;const id=v.id+':'+state.part+':'+state.offline+':'+(stream?.manifest||stream?.src||'');if(mediaID!==id){release();mediaID=id;media=document.createElement('video');media.playsInline=true;media.loop=shortRoute();media.preload='metadata';media.setAttribute('aria-label',stream?'B 站视频画面':'本地交互样片画面');media.tabIndex=-1;const expected=id;if(state.offline){try{const item=await transaction('readonly',s=>s.get(v.id));if(mediaID!==expected)return;if(!item?.blob?.size)throw Error('缓存文件不存在，请重新保存');mediaURL=URL.createObjectURL(item.blob);media.src=mediaURL}catch(e){const el=document.querySelector('#bili-media-error');if(el){el.hidden=false;el.textContent=e.message}return}}else if(!stream?.manifest)media.src=stream?.src||DEMO;media.volume=(osData?.settings?.volume??60)/100;const video=media, partAtMount=state.part;media.onended=()=>saveProgress(video,v.id,partAtMount);media.onloadedmetadata=()=>{
+ if(shortRoute()&&video.videoWidth>=video.videoHeight){
+  release();stream=null;state.notice='此视频的实际画面不符合竖屏条件。';
+  draw('short-stage');void moveShort(1);return;
+ }
+ if(shortRoute())video.classList.add('bili-short-portrait');
+ const recent=discovery.resume(v.id,state.history);const old=recent?.parts?.[partAtMount] || ((!recent?.part||recent.part===partAtMount)?recent:null);const position=old&&!old.finished?old.position:0;video.currentTime=Number.isFinite(position)&&position<video.duration-1?position:0;applySettings();if(autoStart){autoStart=false;video.play().catch(()=>{});}};media.ontimeupdate=updateMedia;media.onplay=updateMedia;
  const playbackStatus = text => {
    const el = document.querySelector('#bili-play-status');
    if (el && media===video) el.textContent=text;
@@ -945,25 +1166,25 @@ async function mountMedia(){const mount=document.querySelector('.bili-media-moun
  };
  media.onplaying=clearBuffer;
  media.onseeked=()=>{if(video.readyState>=3)clearBuffer();clearOverlay();updateMedia();};media.onpause=()=>{clearBuffer();updateMedia();saveProgress(video,v.id,partAtMount)};media.onerror=()=>{
-  if(media!==video||!active()||state.route!=='player')return;
+  if(media!==video||!active()||!playingRoute())return;
   if(stream?.manifest){if(!state.busy)void watchVideo(true, !media?.paused || autoStart);return}
-  if(stream){release();stream=null;state.notice='暂时无法读取此视频，请重试播放。';draw('retry-play');return}
+  if(stream){release();stream=null;state.notice='暂时无法读取此视频，请重试播放。';draw(shortRoute()?'short-retry':'retry-play');return}
   const el=document.querySelector('#bili-media-error');
   if(el){el.hidden=false;el.textContent='样片无法播放，请重试或检查本地缓存。'}
  };}
- if(!active()||state.route!=='player')return;document.querySelector('.bili-media-mount')?.replaceChildren(media);
+ if(!active()||!playingRoute())return;document.querySelector('.bili-media-mount')?.replaceChildren(media);
  if(stream?.manifest && !dashPlayer){
    const dash = window.dashjs.MediaPlayer().create();
    dashPlayer = dash;
    dash.on(window.dashjs.MediaPlayer.events.ERROR,()=>{
-     if(dash!==dashPlayer || !active() || state.route!=='player' || state.busy)return;
+     if(dash!==dashPlayer || !active() || !playingRoute() || state.busy)return;
      void watchVideo(true, !media?.paused || autoStart);
    });
    dash.initialize(media,stream.manifest,false);
  }
  applySettings()}
 const content=osContent;osContent=function(){return active()?render():content()};
-const baseRender=renderOS;renderOS=function(){if(media?.isConnected)media.remove();if(!active()||state.route!=='player')media?.pause?.();baseRender();if(active()){if(state.panel){const sheet=document.querySelector('.bili-sheet');if(sheet){document.querySelector('.bili-app').append(sheet.parentElement);document.querySelector('.bili-body').inert=true;window.LegoGamepad?.refreshFocus(false)}}const body=scrollArea();
+const baseRender=renderOS;renderOS=function(){if(media?.isConnected)media.remove();if(!active()||!playingRoute())media?.pause?.();baseRender();if(active()){if(state.panel){const sheet=document.querySelector('.bili-sheet');if(sheet){document.querySelector('.bili-app').append(sheet.parentElement);document.querySelector('.bili-body').inert=true;window.LegoGamepad?.refreshFocus(false)}}const body=scrollArea();
  if(body){
   const key=scope();
   body.scrollTop=scrollMemory.get(key)||0;
@@ -1000,7 +1221,7 @@ const baseRender=renderOS;renderOS=function(){if(media?.isConnected)media.remove
    document.querySelector('#bili-web-import-note').textContent='导入失败，请检查记录格式或浏览器存储。';
   }
  };
- if(state.route==='player'){
+ if(playingRoute()){
   mountMedia();
   const part = document.querySelector('.bili-episode-track [aria-pressed="true"]');
   if(part) {
@@ -1027,6 +1248,17 @@ function doSearch(q) {
   void loadSearch();
 }
 const click=osClick;osClick=async function(e){const b=e.target.closest('[data-bili-id]');if(!b||!active())return click(e);const id=b.dataset.biliId;if(b.matches('input,select,textarea,a')||id==='submit')return;
+ if(id==='shorts'){if(!shortRoute())return openShorts();return;}
+ if(id==='short-stage'){
+  if(performance.now()<skipShortClickUntil||shorts.menu)return;
+  if(media?.paused)media.play().catch(()=>{});
+  return shortMenu(true);
+ }
+ if(id==='short-prev'||id==='short-next')return moveShort(id==='short-next'?1:-1);
+ if(id==='short-retry')return watchVideo(false,true);
+ if(id==='short-reload')return moveShort(1);
+ const reaction=shortActions.find(action=>action[0]===id);
+ if(reaction)return shortAction(reaction,b);
  if(id==='back')return back();if(id==='search'){if(state.route==='search'){focus('query');return}go('search',false);Object.assign(state,searchSession);searchResult=lastSearchResult;searchFilter=lastSearchFilter;draw('query');return}if(id==='connect'){
   if(state.route==='connect')return;
   go('connect');
@@ -1146,7 +1378,7 @@ function setImmersive(enabled) {
   }
 }
 function skip(id) {
-  if(!active() || state.route!=='player' || state.panel || media?.tagName!=='VIDEO' || !Number.isFinite(media.duration))return;
+  if(!active() || !playingRoute() || state.panel || media?.tagName!=='VIDEO' || !Number.isFinite(media.duration))return;
   const step=id==='rewind'?-10:10;
   media.currentTime=Math.max(0,Math.min(media.duration,media.currentTime+step));
   updateMedia();

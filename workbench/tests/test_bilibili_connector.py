@@ -37,6 +37,17 @@ class ConnectorTests(unittest.TestCase):
   self.assertEqual(data['items'][0]['topic'],'动漫杂谈')
   self.assertIsNone(data['nextPage'])
 
+ def test_shorts_require_portrait_dimensions_and_short_runtime(self):
+  portrait = {'dimension':{'width':720,'height':1280,'rotate':0},'duration':180,'videos':1}
+  self.assertTrue(b.portrait_short(portrait))
+  for invalid in (
+      {**portrait,'duration':181},
+      {**portrait,'videos':2},
+      {**portrait,'dimension':{'width':1280,'height':720}},
+      {**portrait,'dimension':{'width':720,'height':1280,'rotate':1}},
+      {**portrait,'dimension':{}}):
+   self.assertFalse(b.portrait_short(invalid))
+
  def test_empty_search_is_rejected(self):
   with self.assertRaises(ValueError):b.route('/api/bilibili/search',{'q':['  ']})
  def test_unknown_route_rejected(self):

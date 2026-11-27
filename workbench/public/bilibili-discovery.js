@@ -61,13 +61,15 @@
       .filter(item => videoId.test(item?.id)).map(item => [item.id, item]));
     const later = new Set(Array.isArray(data?.later) ? data.later : []);
     const liked = new Set(Array.isArray(data?.liked) ? data.liked : []);
+    const favorites = new Set(Array.isArray(data?.favorites) ? data.favorites : []);
+    const following = new Set(Array.isArray(data?.following) ? data.following : []);
     let snapshot;
     try { snapshot = cleanSnapshot(JSON.parse(storage.getItem(snapshotKey) || '{}')); }
     catch { snapshot = {history: [], favorites: []}; }
     const imported = () => [...snapshot.favorites, ...snapshot.history];
     const catalog = () => [...new Map([...imported(), ...featured, ...added.values()].map(item => [item.id, {...item,cover:coverUrl(item.cover)||featured.find(seed=>seed.id===item.id)?.cover||''}])).values()];
     function save() {
-      storage.setItem(key, JSON.stringify({added: [...added.values()], later: [...later], liked: [...liked]}));
+      storage.setItem(key, JSON.stringify({added: [...added.values()], later: [...later], liked: [...liked], favorites: [...favorites], following: [...following]}));
     }
     function remember(video, fields = {}) {
       const id = video?.id;
@@ -120,6 +122,19 @@
         const query = q.normalize('NFKC').toLowerCase();
         return catalog().filter(item => [item.title, item.author, item.topic, item.id]
           .some(field => String(field || '').normalize('NFKC').toLowerCase().includes(query)));
+      },
+      hasFavorite: id => favorites.has(id),
+      toggleFavorite(video) {
+        if (favorites.has(video.id)) favorites.delete(video.id);
+        else { remember(video); favorites.add(video.id); }
+        save();
+      },
+      favorites: () => [...favorites].reverse(),
+      follows: id => following.has(id),
+      toggleFollow(id) {
+        if (following.has(id)) following.delete(id);
+        else following.add(id);
+        save();
       },
       hasLike: id => liked.has(id),
       toggleLike(video) {

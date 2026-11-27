@@ -145,7 +145,7 @@
 /* GlassTube viewport, shelves, and playback layout. */
 .os-display .bili-app:is(.bili-browsing,.bili-watching){background:#000;border-radius:0;color:#e6e6e6!important;--glass-pad:clamp(12px,4vw,24px);--bili-accent:#fb7299}
 .os-display .bili-browsing .bili-body{gap:0}
-.os-display .bili-browsing .bili-section-bar{margin:18px var(--glass-pad) 6px!important;grid-template-columns:repeat(5,minmax(0,1fr));height:auto;gap:6px;padding:5px}
+.os-display .bili-browsing .bili-section-bar{margin:18px var(--glass-pad) 6px!important;grid-template-columns:repeat(6,minmax(0,1fr));height:auto;gap:6px;padding:5px}
 .os-display .bili-browsing .bili-section-bar button{height:46px;font-size:clamp(13px,3.2vw,18px)}
 .os-display .bili-browsing .bili-section-bar :is(button:focus,button.device-focus){background:var(--bili-accent)!important;color:#17090e!important;box-shadow:0 0 22px #fb729973!important}
 .os-display .bili-browse-scroll{padding:6px 0 28px;scrollbar-width:none}
@@ -259,3 +259,24 @@
 .os-display .bili-app button.bili-search-person{min-height:54px;gap:10px;flex:none;max-width:100%;padding:7px 14px 7px 8px;border-radius:999px;font-size:16px;background:#1e2026!important}
 .os-display .bili-search-person :is(img,svg){width:36px;height:36px;border-radius:50%;object-fit:cover;flex:none}
 .os-display .bili-search-person span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.os-display .bili-shorts .bili-body{position:relative;display:block;height:100%}
+.os-display .bili-shorts-nav{position:absolute;inset:0 0 auto;z-index:4;background:linear-gradient(#000c,transparent);padding-bottom:14px}
+.os-display .bili-shorts :is(.bili-shorts-nav,.bili-short-menu,.bili-short-speed)[hidden]{display:none}
+.os-display .bili-shorts-view{position:relative;height:100%;overflow:hidden;background:#111}
+.os-display .bili-shorts .bili-media-mount{position:absolute;inset:0}
+.os-display .bili-shorts .bili-media-mount video:not(.bili-short-portrait){visibility:hidden}
+.os-display .bili-app button.bili-short-stage,.os-display .bili-app button.bili-short-stage:is(:focus,.device-focus){position:absolute;inset:0;z-index:1;width:100%;height:100%;border:0!important;outline:0!important;background:transparent!important;touch-action:none;cursor:pointer;padding:0}
+.os-display .bili-short-info{position:absolute;inset:auto 0 0;pointer-events:none;z-index:2;background:linear-gradient(transparent,#000c);padding:26px clamp(14px,4vw,26px) 14px}
+.os-display .bili-short-info strong{font-size:17px;color:#fff}
+.os-display .bili-short-info h1{font-size:19px;line-height:1.35;font-weight:500;color:#fff;margin:5px 0 14px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.os-display .bili-short-info #bili-progress-bar{position:relative;display:block;height:4px;border-radius:4px;overflow:hidden}
+.os-display .bili-short-menu{position:absolute;right:0;bottom:13%;z-index:3;display:flex;flex-direction:column;gap:10px;padding:12px 10px;background:#17151bd9;border-radius:22px 0 0 22px}
+.os-display .bili-app .bili-short-menu button{width:48px;min-height:48px;padding:0;border-radius:50%;background:#ffffff17!important;color:#fff!important}
+.os-display .bili-app .bili-short-menu button:disabled{opacity:.36}
+.os-display .bili-app .bili-short-menu button[aria-pressed=true]{color:#fb7299!important;background:#fb729926!important}
+.os-display .bili-app .bili-short-menu button:is(:focus,.device-focus){outline:0!important;border-color:#fb7299!important;box-shadow:0 0 0 2px #fb7299!important}
+.os-display .bili-short-status{position:absolute;z-index:2;top:50%;left:50%;transform:translate(-50%,-50%);width:max-content;max-width:88%;margin:0;color:#eee;font-size:15px;pointer-events:none}
+.os-display .bili-app .bili-short-retry{position:absolute;z-index:3;top:56%;left:50%;transform:translateX(-50%);min-height:38px;padding:6px 14px;border-radius:99px;font-size:15px;white-space:nowrap}
+.os-display .bili-short-speed{position:absolute;z-index:2;top:18%;left:50%;transform:translateX(-50%);border-radius:99px;background:#000b;color:#fff;padding:6px 14px;pointer-events:none}
+@media(max-width:420px){.os-display .bili-browsing .bili-section-bar{gap:2px}.os-display .bili-browsing .bili-section-bar button{font-size:clamp(10px,3vw,13px);padding-inline:2px}}

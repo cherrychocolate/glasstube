@@ -32,7 +32,7 @@ def normalize(v):
  bvid=v.get('bvid','')
  if not re.fullmatch(r'BV[A-Za-z0-9]{10}',bvid):return None
  owner=v.get('owner') or {}
- return {'id':bvid,'cover':cover_url(v.get('pic')),'title':html.unescape(re.sub('<[^>]*>','',v.get('title',''))),'author':owner.get('name') or v.get('author',''),'description':v.get('desc') or v.get('description',''),'duration':v.get('duration',0),'topic':v.get('tname') or v.get('typename',''),'mode':'official','url':'https://www.bilibili.com/video/'+bvid,'parts':[{'page':p.get('page',1),'title':p.get('part',''),'cid':p.get('cid'),'cover':cover_url(p.get('first_frame'))} for p in v.get('pages',[])],'rights':{'mirror':False,'rate':False,'subtitle':False,'offline':False},'source':'Bilibili 游客接口（非开放平台稳定契约）','cid':v.get('cid')}
+ return {'id':bvid,'cover':cover_url(v.get('pic')),'title':html.unescape(re.sub('<[^>]*>','',v.get('title',''))),'author':owner.get('name') or v.get('author',''),'creatorId':str(owner.get('mid') or v.get('mid') or ''),'description':v.get('desc') or v.get('description',''),'duration':v.get('duration',0),'topic':v.get('tname') or v.get('typename',''),'mode':'official','url':'https://www.bilibili.com/video/'+bvid,'parts':[{'page':p.get('page',1),'title':p.get('part',''),'cid':p.get('cid'),'cover':cover_url(p.get('first_frame'))} for p in v.get('pages',[])],'rights':{'mirror':False,'rate':False,'subtitle':False,'offline':False},'source':'Bilibili 游客接口（非开放平台稳定契约）','cid':v.get('cid')}
 CATEGORY_START = 5
 CATEGORY_LAST = 12
 
@@ -78,6 +78,42 @@ def category_feed(query):
  with ThreadPoolExecutor(max_workers=2) as pool:
   pages = list(pool.map(popular_page,range(page,end)))
  return {'items':popular_items(pages,topic), 'nextPage':None if end>CATEGORY_LAST or pages[-1].get('no_more') else end}
+
+
+SHORT_DURATION = 180
+SHORT_REGIONS = (160, 211, 4)
+
+
+def portrait_short(video):
+ dimension = video.get('dimension') or {}
+ width, height = dimension.get('width'), dimension.get('height')
+ duration = video.get('duration')
+ return (isinstance(width,int) and isinstance(height,int) and 0 < width < height
+         and not dimension.get('rotate') and isinstance(duration,int) and 0 < duration <= SHORT_DURATION
+         and video.get('videos',1)==1)
+
+
+def shorts_feed(query):
+ page_text = query.get('page',['1'])[0]
+ if not re.fullmatch(r'[1-9][0-9]?',page_text) or int(page_text)>20:
+  raise ValueError('无效页码')
+ page = int(page_text)
+ def partition(rid):
+  return _request('x/web-interface/newlist',{'rid':rid,'pn':page,'ps':30}).get('archives') or []
+ with ThreadPoolExecutor(max_workers=len(SHORT_REGIONS)) as pool:
+  jobs = [pool.submit(partition,rid) for rid in SHORT_REGIONS]
+  regions = []
+  for job in jobs:
+   try:
+    regions.append(job.result())
+   except BiliUnavailable:
+    continue
+ if not regions:
+  raise BiliUnavailable('暂时无法读取短视频。')
+ candidates = sorted((v for region in regions for v in region if portrait_short(v)),
+                     key=lambda v:v.get('pubdate') or 0,reverse=True)
+ return {'items':popular_items([{'list':candidates}]),
+         'nextPage':page+1 if page<20 and any(len(region)==30 for region in regions) else None}
 
 
 def region_feed(query):
@@ -172,6 +208,7 @@ def route(path,query):
  if path=='/api/bilibili/home':return home_feed()
  if path=='/api/bilibili/category':return category_feed(query)
  if path=='/api/bilibili/region':return region_feed(query)
+ if path=='/api/bilibili/shorts':return shorts_feed(query)
  if path=='/api/bilibili/related':
   ident=video_id(query)
   vs=[v for v in _request('x/web-interface/archive/related',{'bvid':ident}) if v.get('bvid')!=ident][:20]

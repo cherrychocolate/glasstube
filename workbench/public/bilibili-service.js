@@ -13,6 +13,8 @@ const discovery = BilibiliDiscovery.create(localStorage, [
   {id:'BV1EY4y1A7tJ',cover:'https://i0.hdslb.com/bfs/storyff/n220808qn1h3omq45ryar33phqhc87v2_firsti.jpg',title:'全球趣事儿大揭秘 · TED-Ed 英语科普',author:'惊叹号的英语世界',topic:'知识与科技',reason:'多分集科普 · 按集观看'},
   {id:'BV1Dd1HzVENm',cover:'https://i0.hdslb.com/bfs/storyff/_00001zjldottrusbp2q5q2xb1a35awb_firsti.jpg',title:'【毕导】最对味的一集！如何放出无声的屁？响屁不臭臭屁不响是真的吗？',author:'毕导',duration:754,topic:'知识与科技',reason:'用实验回答一个日常问题'}
 ].map(v => ({...v,mode:'official',url:'https://www.bilibili.com/video/'+v.id})));
+let feed = {items:[], categories:new Map(), busy:false, error:''};
+const CATEGORY_BATCH = 5;
 let searchSession = {query:'',mode:'live',items:[],error:'',notice:''};
 let viewTitle = '', account = 'disconnected', qr = '', pollTimer, stream = null;
 let loginMessage = '';
@@ -49,30 +51,92 @@ function iconButton(id,label,symbol,extra='',caption='') {
   return `<button type="button" class="bili-icon-button" data-bili-id="${H(id)}" aria-label="${H(label)}" title="${H(label)}" ${extra}>${icon(symbol)}${caption?`<span>${H(caption)}</span>`:''}</button>`;
 }
 const selected=()=>state.selected;
-function officialWatchUrl(video) {
-  const url = new URL(video.url);
-  const progress = discovery.resume(video.id, state.history);
-  if (state.part > 1) url.searchParams.set('p', state.part);
-  if (progress && !progress.finished && (!progress.part || progress.part === state.part) && progress.position > 1) {
-    url.searchParams.set('t', Math.floor(progress.position));
-  }
-  return url.href;
-}
-
 const scrollArea=()=>document.querySelector('.bili-browse-scroll')||document.querySelector('.bili-body');
 function remember(){if(!active())return;const key=document.activeElement?.dataset?.biliId;if(key)focusMemory.set(scope(),key);scrollMemory.set(scope(),scrollArea()?.scrollTop||0)}
 function focus(id){const el=[...document.querySelectorAll('.bili-app [data-bili-id]')].find(e=>e.dataset.biliId===id&&!e.disabled&&!e.closest('[inert]'));if(el&&!window.LegoGamepad?.focusElement?.(el)){document.querySelectorAll('.device-focus').forEach(e=>e.classList.remove('device-focus'));el.classList.add('device-focus');el.focus({preventScroll:true});el.scrollIntoView({block:'nearest'});}}
-function draw(defaultID){renderOS();requestAnimationFrame(()=>{if(!active())return;const sheet=document.querySelector('.bili-sheet');focus(defaultID||focusMemory.get(scope())||(sheet?sheet.querySelector('[data-bili-id]')?.dataset.biliId:document.querySelector('.bili-app [data-focus-default]')?.dataset.biliId)||'back')})}
+function draw(defaultID){
+  renderOS();
+  requestAnimationFrame(()=>{
+    if(!active())return;
+    const available = [...document.querySelectorAll('.bili-app [data-bili-id]')]
+      .filter(element => !element.disabled && !element.closest('[inert]') && element.getClientRects().length);
+    const target = available.find(element => element.dataset.biliId === (defaultID || focusMemory.get(scope()))) ||
+      available.find(element => element.hasAttribute('data-focus-default')) || available[0];
+    if(target)focus(target.dataset.biliId);
+  });
+}
 function go(route, render = true, origin){if(state.route==='search'){const {query,mode,items,error,notice}=state;searchSession={query,mode,items,error,notice};}generation++;state.busy=false;remember();stack.push({focus:origin||focusMemory.get(scope()),route:state.route,selected:state.selected,part:state.part,items:state.items,query:state.query,mode:state.mode,offline:state.offline,viewTitle,stream,folders:state.folders,error:state.error,notice:state.notice});state.route=route;state.panel='';state.error='';state.notice='';if(route!=='player')media?.pause?.();if(render)draw();}
-function back(){if(!active())return false;if(immersive&&!state.panel){setImmersive(false);return true;}if(state.panel){if(state.panel==='danmaku'){state.panel='danmaku-options';draw('danmaku');return true}if(state.panel==='login')stopPoll();state.panel='';draw(focusMemory.get(scope())||'settings');return true}if(stack.length){generation++;state.busy=false;remember();media?.pause?.();const {focus:origin,...previous}=stack.pop();Object.assign(state,previous);viewTitle=previous.viewTitle;stream=previous.stream;draw(origin);return true}osNavigate('center');return true}
+function back(){if(!active())return false;if(immersive&&!state.panel){setImmersive(false);return true;}if(state.panel){if(state.panel==='danmaku'){state.panel='danmaku-options';draw('danmaku');return true}if(state.panel==='login')stopPoll();if(state.panel==='danmaku-options'){state.panel='settings';draw('danmaku-options');return true;}state.panel='';draw(focusMemory.get(scope())||'settings');return true}if(stack.length){generation++;state.busy=false;remember();media?.pause?.();const {focus:origin,...previous}=stack.pop();Object.assign(state,previous);viewTitle=previous.viewTitle;stream=previous.stream;draw(origin);return true}osNavigate('center');return true}
 function showPanel(panel, initialFocus){remember();state.panel=panel;draw(initialFocus)}
-async function request(path,post=false){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),9500);try{const r=await fetch('/api/bilibili/'+path,{signal:controller.signal,...(post?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{})});const d=await r.json();if(!r.ok)throw Error(d.error||'读取失败');return d}finally{clearTimeout(timer)}}
-async function loadLive(search=false){const gen=++generation;state.mode='live';state.busy=true;state.error='';state.items=[];draw();try{const data=await request(search?'search?q='+encodeURIComponent(state.query):'home');if(gen!==generation)return;state.items=data.items;state.notice='游客公开内容 · 非个性化推荐'}catch(e){if(gen!==generation)return;state.error=e.name==='AbortError'?'读取超时，请重试或在官方页面继续。':e.message;if(search){state.items=discovery.search(state.query);if(state.items.length)state.notice='以下是本机片库的匹配视频。'}}finally{if(gen===generation){state.busy=false;if(active())draw()}}}
-async function detail(id, direct = false) {
-  const item = state.items.find(x=>x.id===id) || discovery.find(id) || samples.find(x=>x.id===id);
+async function request(path,post=false){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),9500);try{const r=await fetch('/api/bilibili/'+path,{signal:controller.signal,cache:'no-store',...(post?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{})});const d=await r.json();if(!r.ok)throw Error(d.error||'读取失败');return d}finally{clearTimeout(timer)}}
+async function loadSearch(){const gen=++generation;state.mode='live';state.busy=true;state.error='';state.items=[];draw();try{const data=await request('search?q='+encodeURIComponent(state.query));if(gen!==generation)return;state.items=data.items;state.notice='游客公开内容 · 非个性化推荐'}catch(e){if(gen!==generation)return;state.error=e.name==='AbortError'?'读取超时，请重试。':e.message;state.items=discovery.search(state.query);if(state.items.length)state.notice='以下是本机片库的匹配视频。'}finally{if(gen===generation){state.busy=false;if(active())draw()}}}
+const isFeed = () => ['home','featured','topics'].includes(state.route);
+async function refreshFeed() {
+  if (feed.busy) return;
+  remember();
+  feed.busy = true;
+  feed.error = '';
+  draw();
+  try {
+    const data = await request('home');
+    feed.items = [...new Map(data.items.map(video => [video.id, video])).values()];
+    feed.categories = new Map();
+    for (const video of data.categoryItems || data.items) {
+      const topic = video.topic || '其他';
+      if (!feed.categories.has(topic)) feed.categories.set(topic,{items:[],count:CATEGORY_BATCH,page:data.categoryPage??null});
+      const shelf = feed.categories.get(topic);
+      if (!shelf.items.some(item=>item.id===video.id)) shelf.items.push(video);
+    }
+    if (data.stale) feed.error='暂时无法读取实时热门，正在显示最近保存的热门列表。';
+  } catch (error) {
+    feed.error = error.name === 'AbortError' ? '读取 B 站热门超时' : error.message;
+  } finally {
+    feed.busy = false;
+    if (active() && isFeed()) { remember(); draw(); }
+  }
+}
+function relatedVideos() {
+  const video = selected();
+  return (video.related?.length ? video.related : video.mode==='demo'?samples:feed.items)
+    .filter(item => item.id !== video.id).slice(0,20);
+}
+function cardVideo(key) {
+  const id = key.split(':').at(-1);
+  if (key.startsWith('related:')) return relatedVideos().find(video => video.id === id);
+  if (key.startsWith('category:')) return feed.categories.get(key.slice(9,key.lastIndexOf(':')))?.items.find(video=>video.id===id);
+  if (key.startsWith('hot:')) return feed.items.find(video => video.id === id);
+  return state.items.find(video => video.id === id) || catalog(id);
+}
+let menuVideo;
+function openCardMenu(target) {
+  const video = cardVideo(target.dataset.biliId);
+  if (!video) return false;
+  menuVideo = video;
+  focus(target.dataset.biliId);
+  showPanel('card-menu','menu-watch');
+  return true;
+}
+function openRecommendation(id) {
+  return detail(id, true, relatedVideos().find(video => video.id === id), true);
+}
+async function detail(id, direct = false, recommendation, replace = false) {
+  const item = recommendation || state.items.find(x=>x.id===id) || feed.items.find(x=>x.id===id) || discovery.find(id) || samples.find(x=>x.id===id);
   if (!item) return;
-  go(direct ? 'player' : 'detail',false,direct?'video:'+id:undefined);
-  state.selected = item;
+  if (state.route === 'player') {
+    if (media?.tagName === 'VIDEO') saveProgress(media, selected().id, state.part);
+    release();
+    immersive = false;
+  }
+  if (replace) {
+    generation++;
+    state.panel = '';
+    state.error = '';
+    state.notice = '';
+    scrollMemory.delete(scope());
+  } else {
+    go(direct ? 'player' : 'detail', false);
+  }
+  state.selected = {...item};
   state.part = discovery.resume(id,state.history)?.part || 1;
   state.offline = false;
   stream = null;
@@ -82,9 +146,21 @@ async function detail(id, direct = false) {
   if (item.mode !== 'official') return;
   const gen = ++generation;
   const q = encodeURIComponent(id);
+  request('related?id='+q).then(result => {
+    if (selected().id !== id || !['detail','player'].includes(state.route)) return;
+    state.selected.related = result.items;
+    const track = document.querySelector('#bili-related');
+    if (track && result.items.length) {
+      const focused = document.activeElement?.dataset.biliId;
+      const wasFocused = track.contains(document.activeElement);
+      track.outerHTML = recommendationShelf();
+      if (wasFocused) focus(relatedVideos().some(video => 'related:'+video.id===focused) ?
+        focused : document.querySelector('#bili-related [data-bili-id]')?.dataset.biliId || 'back');
+    }
+  }).catch(() => {});
   const [metadata, parts] = await Promise.allSettled([request('video?id='+q), request('parts?id='+q)]);
   if (gen !== generation) return;
-  const next = {...item, ...(metadata.value?.item || {})};
+  const next = {...state.selected, ...(metadata.value?.item || {})};
   if (parts.value?.parts?.length) next.parts = parts.value.parts;
   if (!next.parts?.some(part => part.page === state.part)) state.part = 1;
   if (discovery.find(id) && metadata.value?.item) {
@@ -98,7 +174,10 @@ let autoStart = false;
 let immersive = false;
 async function watchVideo(preferMp4 = false, autoplay = false) {
   if (state.route !== 'player') go('player',false);
+  else remember();
   autoStart = autoplay;
+  state.notice = '';
+  if (state.route==='player' && selected().mode!=='demo') release();
   stream = null;
   if (selected().mode === 'demo') { draw('toggle'); return; }
   const gen = ++generation;
@@ -111,11 +190,11 @@ async function watchVideo(preferMp4 = false, autoplay = false) {
       discovery.remember(selected());
     }
   } catch (error) {
-    if (gen === generation) state.notice = '设备播放器暂不可用。可用 B 站播放器或打开原站。';
+    if (gen === generation) state.notice = '暂时无法加载播放源，请重试。';
   } finally {
     if (gen === generation) {
       state.busy = false;
-      draw(stream ? 'toggle' : 'embed-activate');
+      draw(state.panel ? undefined : stream ? 'toggle' : 'retry-play');
     }
   }
 }
@@ -255,7 +334,7 @@ function loadVisibleCovers(body) {
     if(event.target.matches('.bili-cover img'))event.target.remove();
   },true);
 }
-function cards(items) {
+function cards(items, prefix = 'video:') {
   return items.map((video,index)=>{
     const resume=discovery.resume(video.id,state.history);
     const hasProgress=resume&&!resume.finished&&resume.position>1;
@@ -264,7 +343,7 @@ function cards(items) {
       Math.min(100,Math.floor(100*resume.position/total)):0;
     const art=coverArt(video.cover || discovery.find(video.id)?.cover,video.mode==='demo'?'':video.id,
       typeof video.duration==='string'&&/^\d+(?::\d{2}){1,2}$/.test(video.duration)?video.duration:video.duration>0?time(video.duration):'',video.parts?.length||0,percent);
-    return `<button type="button" class="bili-video-card" data-bili-id="video:${H(video.id)}" ${index===0?'data-focus-default':''}>
+    return `<button type="button" class="bili-video-card" data-bili-id="${H(prefix+video.id)}" ${prefix==='video:'&&index===0?'data-focus-default':''}>
       ${art}
       <span class="bili-card-copy"><strong>${H(video.title)}</strong><small>${H(video.author ? 'UP '+video.author : '')}${video.topic&&video.topic!=='未分类'?' · '+H(video.topic):''}</small>
       ${hasProgress||discovery.hasLater(video.id)?`<span class="bili-card-badges">${hasProgress?`<em>P${resume.part||1} · 已看至 ${time(resume.position)}</em>`:''}
@@ -273,38 +352,115 @@ function cards(items) {
   }).join('');
 }
 function currentSection() {
-  if(state.route==='shelf'&&viewTitle==='推荐')return 'featured';
-  return ({home:'recent',search:'search',connect:'connect'})[state.route];
+  return ({home:'recent',featured:'featured',topics:'topics',connect:'connect',search:'search'})[state.route];
 }
 function sectionBar(selectedTab) {
-  const tabs=[['recent','继续看'],['featured','推荐'],['search','搜索'],['connect','我的']];
+  const tabs=[['recent','首页'],['featured','为你推荐'],['topics','主题'],['connect','片库'],['search','搜索']];
   return `<nav class="bili-section-bar" aria-label="B 站服务">
     ${tabs.map(([id,label])=>button(id,label,id===selectedTab?'aria-current="page" data-focus-default':'')).join('')}
   </nav>`;
 }
 function header(title,sub=''){return `<header class="bili-head"><div><small>bilibili / LEGO OS</small><h1>${H(title)}</h1></div>${iconButton('back','返回上一页','back')}</header>${sub?`<p class="bili-kicker">${H(sub)}</p>`:''}`}
-function status(){return `${state.busy?'<p role="status" class="bili-note">正在读取 B 站公开内容…</p>':''}${state.error?`<div class="bili-alert" role="status">${H(state.error)}${button('retry','重新读取')}${state.route==='search'&&state.query?` <a data-bili-id="official-search" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(state.query)}" target="_blank" rel="noopener">在 B 站搜索 ↗</a>`:''}</div>`:''}${state.notice?`<p class="bili-note" role="status">${H(state.notice)}</p>`:''}`}
-let homeOrder;
+function status(){return `${state.busy?'<p role="status" class="bili-note">正在读取 B 站公开内容…</p>':''}${state.error?`<div class="bili-alert" role="status">${H(state.error)}${button('retry','重新读取')}</div>`:''}${state.notice?`<p class="bili-note" role="status">${H(state.notice)}</p>`:''}`}
+function feedStatus() {
+  return `<div class="bili-feed-status">
+    ${feed.error?`<span role="status">${H(feed.error)}</span>`:''}
+    ${!feed.busy&&!feed.error&&!feed.items.length?'<span role="status">暂时没有热门视频</span>':''}</div>`;
+}
+function videoShelf(title, items, prefix, id = '') {
+  return `<section class="bili-glass-shelf" ${id?`id="${id}"`:''}><h3>${H(title)} <span>${items.length}</span></h3>
+    ${items.length?`<div class="bili-track">${cards(items,prefix)}</div>`:'<p class="bili-feed-empty">暂无视频</p>'}</section>`;
+}
+function topicGroups() {
+  return [...feed.categories].map(([topic,shelf])=>[topic,shelf.items]);
+}
+function categoryShelf(topic, shelf) {
+  const visible = shelf.items.slice(0,shelf.count);
+  return `<section class="bili-glass-shelf" data-category="${H(topic)}"><h3>${H(topic)} <span>${visible.length}</span></h3>
+    <div class="bili-track">${cards(visible,'category:'+topic+':')}</div>
+    <p class="bili-category-status" role="status"></p></section>`;
+}
+async function extendCategory(section, focused) {
+  const topic = section.dataset.category;
+  const shelf = feed.categories.get(topic);
+  if (!shelf || shelf.loading) return;
+  const track = section.querySelector('.bili-track');
+  const status = section.querySelector('.bili-category-status');
+  const start = shelf.count;
+  const canLoad = () => shelf.page !== null;
+  shelf.loading = true;
+  status.textContent = '正在加载更多…';
+  let failed = false;
+  let stale = false;
+  try {
+    while (canLoad()) {
+      const result = await request('category?'+new URLSearchParams({topic,page:shelf.page}));
+      if (feed.categories.get(topic)!==shelf) return;
+      const existing = new Set(shelf.items.map(video=>video.id));
+      const fresh = result.items.filter(video=>{
+        if ((video.topic||'其他')!==topic || existing.has(video.id)) return false;
+        existing.add(video.id);
+        return true;
+      });
+      // Newly fetched videos follow the current last card. Any reserve stays available.
+      shelf.items.splice(start,0,...fresh);
+      stale ||= !!result.stale;
+      shelf.page = result.nextPage ?? null;
+      if (shelf.items.length > start) break;
+    }
+  } catch {
+    failed = true;
+  } finally {
+    shelf.loading = false;
+  }
+  if (feed.categories.get(topic)!==shelf) return;
+  const added = shelf.items.slice(start,start+CATEGORY_BATCH);
+  shelf.count += added.length;
+  if (!section.isConnected) return;
+  const advance = document.activeElement===focused;
+  if (added.length) {
+    track.insertAdjacentHTML('beforeend',cards(added,'category:'+topic+':'));
+    section.querySelector('h3 span').textContent = shelf.count;
+    status.textContent = stale?'已追加保存的视频':'';
+    if (advance) focus('category:'+topic+':'+added[0].id);
+  } else {
+    status.textContent = failed?'加载失败，再按右键重试。':'没有更多视频。';
+  }
+}
+document.addEventListener('keydown', event=>{
+  if (!['ArrowLeft','ArrowRight'].includes(event.key) || state.route!=='home' || state.panel) return;
+  const card = event.target.closest?.('[data-bili-id^="category:"]');
+  const section = card?.closest('[data-category]');
+  if (!section) return;
+  const right = event.key==='ArrowRight';
+  const neighbor = right?card.nextElementSibling:card.previousElementSibling;
+  if (!right && !neighbor) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (neighbor) focus(neighbor.dataset.biliId);
+  else if (!event.repeat) void extendCategory(section,card);
+},true);
 function home() {
   const recent=discovery.recent(state.history).map(catalog).filter(Boolean);
-  if(!homeOrder)homeOrder=(recent.length?recent:discovery.featured()).map(video=>video.id);
-  const list=homeOrder.map(catalog).filter(Boolean);
-  return `<p class="bili-home-notice">${account==='connected'?'设备观看记录':'游客模式 · 观看进度保存在本机'}</p>
-    <h1 class="bili-feed-label">${recent.length?'继续观看':'快速开始'}</h1>
-    <div class="bili-list bili-video-list">${cards(list)}</div>`;
+  return (recent.length?videoShelf('继续观看',recent,'video:'):'') +
+    feedStatus() + videoShelf('B 站热门',feed.items, 'hot:') +
+    [...feed.categories].filter(([,shelf])=>shelf.items.length>=CATEGORY_BATCH)
+      .map(([topic,shelf])=>categoryShelf(topic,shelf)).join('');
+}
+function featured() {
+  const [hero,...rest] = feed.items;
+  return (hero?`<button class="bili-hero" data-bili-id="hot:${H(hero.id)}">${coverArt(hero.cover,hero.id)}
+    <span class="bili-hero-copy"><small>B 站热门</small><strong>${H(hero.title)}</strong><span>${H(hero.author)}</span></span>
+    </button><h3 class="bili-section-label">更多推荐</h3><div class="bili-list bili-video-list">${cards(rest,'hot:')}</div>`:'') + feedStatus();
 }
 function shelfView() {
-  const recommended=viewTitle==='推荐';
-  return `${recommended?`<h1 class="bili-feed-label">精选视频 <span>${state.items.length} 条</span></h1>`:header(viewTitle)}${status()}
-    <div class="bili-list bili-video-list">${cards(state.items)}</div>
-    ${recommended?`<nav class="bili-nav" aria-label="发现分类">${button('topics','主题')}${button('live','B 站热门')}${button('import','添加链接')}</nav>`:''}
+  return `${header(viewTitle)}${status()}<div class="bili-list bili-video-list">${cards(state.items)}</div>
     ${!state.busy&&!state.items.length&&!state.notice?'<p class="bili-note">这里暂时没有视频。</p>':''}`;
 }
 function topicsView() {
-  return `${header('主题')}<div class="bili-list bili-topics">
-    ${BilibiliDiscovery.topics.map(topic=>button('topic:'+topic,topic+' · '+discovery.byTopic(topic).length)).join('')}
-    ${button('import','添加链接')}
-  </div>`;
+  return `<div class="bili-topic-grid">${[...topicGroups()].map(([topic,videos],index)=>
+    `<button class="bili-topic-tile" style="--h:${(205+index*47)%360}" data-bili-id="topic:${H(topic)}">
+      <span>${icon('discover')}</span><span>${H(topic)}<small>${videos.length} 个视频</small></span></button>`).join('')}</div>${feedStatus()}`;
 }
 function importView() {
   return `${header('添加 B 站视频')}<form id="bili-import-form" class="bili-import">
@@ -332,48 +488,103 @@ function search() {
     ${status()}<div class="bili-list bili-video-list">${cards(state.items)}</div>
     ${state.query&&!state.busy&&!state.error&&!state.items.length?'<p class="bili-note">没有匹配的视频。</p>':''}`;
 }
-function details(){const v=selected(),pos=discovery.resume(v.id,state.history)?.finished?0:discovery.resume(v.id,state.history)?.position||0;return `${header('视频详情',v.mode==='demo'?'本地交互样片 · 非 B 站内容':'B 站视频')}<div class="bili-detail-art tone-${v.tone||'blue'}"><span>▶</span><small>${v.mode==='demo'?'LOCAL PLAYBACK TEST':H(v.id)}</small></div><h2 class="bili-title">${H(v.title)}</h2><p class="bili-author">${H(v.author)}</p><div class="bili-actions">${button('watch',pos>1?'继续播放 '+time(pos):'开始观看','data-focus-default')}${button('parts','选集 · '+(v.parts?.length||1))}${button('save-later',discovery.hasLater(v.id)?'取消稍后看':'稍后看',`aria-pressed="${discovery.hasLater(v.id)}"`)}</div><p class="bili-description">${H(v.description||'此视频暂未提供简介。')}</p>${status()}${v.url?`<a data-bili-id="official" href="${H(officialWatchUrl(v))}" target="_blank" rel="noopener">在 B 站打开 ↗</a>`:''}`}
+function details(){const v=selected(),pos=discovery.resume(v.id,state.history)?.finished?0:discovery.resume(v.id,state.history)?.position||0;return `${header('视频详情',v.mode==='demo'?'本地交互样片 · 非 B 站内容':'B 站视频')}<div class="bili-detail-art tone-${v.tone||'blue'}"><span>▶</span><small>${v.mode==='demo'?'LOCAL PLAYBACK TEST':H(v.id)}</small></div><h2 class="bili-title">${H(v.title)}</h2><p class="bili-author">${H(v.author)}</p><div class="bili-actions">${button('watch',pos>1?'继续播放 '+time(pos):'开始观看','data-focus-default')}${button('parts','选集 · '+(v.parts?.length||1))}${button('save-later',discovery.hasLater(v.id)?'取消稍后看':'稍后看',`aria-pressed="${discovery.hasLater(v.id)}"`)}</div><p class="bili-description">${H(v.description||'此视频暂未提供简介。')}</p>${status()}`}
 let danmakuItems = [], danmakuStatus = '', danmakuAt = 0;
-let overlayWindow = {key:'',items:[],status:''};
-function showOverlay(t) {
+const DANMAKU_TRAVEL = 7, FIXED_TIME = 4;
+const commentTracks = new Map();
+let overlay = null, frame = 0;
+
+function commentsForPart() {
+  const key = selected().id + ':' + state.part;
+  if (!commentTracks.has(key)) {
+    if (commentTracks.size >= 8) commentTracks.delete(commentTracks.keys().next().value);
+    const data = {items:[], error:''};
+    commentTracks.set(key, data);
+    request('danmaku?id='+encodeURIComponent(selected().id)+'&page='+state.part+'&all=1')
+      .then(result => { data.items = result.items; })
+      .catch(() => { data.error = '弹幕暂不可用'; })
+      .finally(() => updateOverlay());
+  }
+  return commentTracks.get(key);
+}
+function clearOverlay() {
+  cancelAnimationFrame(frame);
+  frame = 0;
+  overlay?.layer.replaceChildren();
+  overlay = null;
+}
+function updateOverlay() {
+  cancelAnimationFrame(frame);
+  frame = 0;
   const layer = document.querySelector('#bili-danmaku-overlay');
-  if (!layer) return;
-  if (!state.danmaku || !stream || !media || media.paused) {
-    layer.textContent='';
-    document.querySelector('#bili-danmaku-status')?.replaceChildren();
-    if (!state.danmaku) overlayWindow={key:'',items:[],status:''};
+  const status = document.querySelector('#bili-danmaku-status');
+  if (!layer || !state.danmaku || !stream || state.busy || media?.tagName !== 'VIDEO') {
+    clearOverlay();
+    if (status) status.textContent = '';
     return;
   }
-  const bucket = Math.floor(t/20);
-  const key = selected().id+':'+state.part+':'+bucket;
-  if (overlayWindow.key!==key) {
-    const windowData = {key,items:[],status:''};
-    overlayWindow = windowData;
-    request('danmaku?id='+encodeURIComponent(selected().id)+'&page='+state.part+'&at='+(bucket*20+10))
-      .then(result=>{windowData.items=result.items||[];})
-      .catch(()=>{windowData.status='弹幕暂不可用';});
+  const data = commentsForPart();
+  if (status) status.textContent = data.error;
+  const t = media.currentTime || 0;
+  const width = layer.clientWidth;
+  const laneCount = Math.max(1, Math.floor(layer.clientHeight * .42 / 32));
+  if (!overlay || overlay.layer !== layer || overlay.items !== data.items ||
+      overlay.width !== width || overlay.laneCount !== laneCount || t < overlay.last || t-overlay.last > 1) {
+    clearOverlay();
+    let low = 0, high = data.items.length;
+    while (low < high) {
+      const mid = Math.floor((low+high)/2);
+      if (data.items[mid].at < t-DANMAKU_TRAVEL) low = mid+1;
+      else high = mid;
+    }
+    overlay = {layer, items:data.items, width, laneCount, index:low, last:t, visible:[]};
   }
-  let items = overlayWindow.items.filter(item=>item.at<=t && t-item.at<4);
-  if(state.curated) {
-    const seen = new Set();
-    items = items.filter(item=>{
-      const text = item.text.replace(/[\s\p{P}]/gu,'');
-      if(text.length<5 || seen.has(text) || /^(.)\1+$/u.test(text))return false;
-      seen.add(text);
-      return true;
-    }).slice(0,1);
+  const view = overlay;
+  view.last = t;
+  view.visible = view.visible.filter(comment => {
+    if (t < comment.end) return true;
+    comment.node.remove();
+    return false;
+  });
+  const speed = width / DANMAKU_TRAVEL;
+  while (view.index < data.items.length && data.items[view.index].at <= t) {
+    const item = data.items[view.index++];
+    const mode = item.mode === 4 ? 'bottom' : item.mode === 5 ? 'top' : item.mode === 6 ? 'reverse' : 'scroll';
+    const fixed = mode === 'top' || mode === 'bottom';
+    const text = item.text.replace(/[\s\p{P}]/gu,'');
+    if (state.curated && (text.length < 5 || view.visible.length >= 3 ||
+        view.visible.some(comment => comment.text === text))) continue;
+    const node = document.createElement('span');
+    node.className = 'bili-danmaku-comment';
+    node.textContent = item.text;
+    node.style.fontSize = Math.min(28,item.size) + 'px';
+    node.style.color = '#' + item.color.toString(16).padStart(6,'0');
+    layer.append(node);
+    const textWidth = node.offsetWidth;
+    const end = item.at + (fixed ? FIXED_TIME : DANMAKU_TRAVEL + textWidth/Math.max(1,speed));
+    const lane = Array.from({length:laneCount}, (_, i) => i).find(i =>
+      !view.visible.some(previous => previous.lane === i &&
+        (mode === 'bottom') === (previous.mode === 'bottom') &&
+        (fixed || previous.mode !== mode ? previous.end > item.at :
+          speed*(item.at-previous.at) < (mode==='reverse'?textWidth:previous.width)+24)));
+    if (end <= t || lane === undefined) { node.remove(); continue; }
+    node.style[mode==='bottom'?'bottom':'top'] = (mode==='bottom'?48:12) + lane*32 + 'px';
+    view.visible.push({node, lane, at:item.at, end, width:textWidth, mode, text});
   }
-  const text = items.slice(-2).map(item=>item.text).join('\n');
-  if(layer.textContent!==text)layer.textContent=text;
-  const notice = document.querySelector('#bili-danmaku-status');
-  if(notice && notice.textContent!==overlayWindow.status)notice.textContent=overlayWindow.status;
+  for (const comment of view.visible) {
+    const distance = speed*(t-comment.at);
+    const x = comment.mode==='scroll' ? width-distance : comment.mode==='reverse' ?
+      distance-comment.width : (width-comment.width)/2;
+    comment.node.style.transform = `translateX(${x}px)`;
+  }
+  if (!media.paused && !media.ended) frame = requestAnimationFrame(updateOverlay);
 }
 async function openDanmaku() {
   danmakuAt = media?.currentTime || 0;
   danmakuItems = [];
   danmakuStatus = '正在读取本集弹幕…';
   showPanel('danmaku');
-  const gen = ++generation;
+  const gen = generation;
   try {
     const result = await request('danmaku?id='+encodeURIComponent(selected().id)+'&page='+state.part+'&at='+Math.floor(danmakuAt));
     if (gen!==generation || state.panel!=='danmaku') return;
@@ -385,18 +596,17 @@ async function openDanmaku() {
   }
   draw(danmakuItems.length ? 'danmaku:0' : 'close');
 }
-function panel(){const p=state.panel;if(!p)return '';let title='',body='';if(p==='settings'){title='播放设置';body=button('mirror','镜像 · '+(state.mirror?'开':'关'),`aria-pressed="${state.mirror}"`)+button('speed','倍速 · '+state.rate+'×')+button('subtitle',stream && !stream.captionCues.length?'此视频暂无可用字幕':'字幕 · '+(state.subtitle?'开':'关'),stream && !stream.captionCues.length?'disabled':`aria-pressed="${state.subtitle}"`)+button('cache-one','离线缓存入口');}
+function panel(){const p=state.panel;if(!p)return '';let title='',body='';if(p==='settings'){title='播放设置';body=button('mirror','镜像 · '+(state.mirror?'开':'关'),`aria-pressed="${state.mirror}"`)+button('speed','倍速 · '+state.rate+'×')+button('subtitle','字幕 · '+(state.subtitle?'开':'关'),`aria-pressed="${state.subtitle}"`)+button('cache-one','离线缓存入口')+(selected().mode!=='demo'?button('danmaku-options','弹幕设置'):'')+(stream&&!stream.captionCues.length?'<p>此视频暂无可用字幕。</p>':'');}
+ if(p==='card-menu'){
+  title=menuVideo.title;
+  body=button('menu-watch','播放')+button('menu-later',discovery.hasLater(menuVideo.id)?'取消稍后看':'稍后看');
+ }
  if(p==='danmaku-options'){
   title='弹幕';
   body=button('danmaku-switch',state.danmaku?'弹幕 · 开':'弹幕 · 关',`aria-pressed="${state.danmaku}"`)+
     button('danmaku-curated',state.curated&&state.danmaku?'精选弹幕 · 开':'精选弹幕 · 关',state.danmaku?`aria-pressed="${state.curated}"`:'disabled aria-pressed="false"')+
     (state.danmaku?'<p>精选在设备端过滤过短、重复的发言，并降低显示密度。</p>':'')+
-    button('danmaku','查看附近弹幕');
- }
- if(p==='watch-more'){
-  title='视频';
-  body=button('watch-info','详情与简介')+button('save-later',discovery.hasLater(selected().id)?'移出稍后看':'加入稍后看')+
-    (selected().url?`<a data-bili-id="official" href="${H(officialWatchUrl(selected()))}" target="_blank" rel="noopener">在 B 站继续观看 ↗</a>`:'');
+    button('danmaku','查看附近弹幕',state.busy?'disabled':'');
  }
  if(p==='danmaku'){
   title='附近弹幕 · '+time(danmakuAt);
@@ -415,55 +625,59 @@ function panel(){const p=state.panel;if(!p)return '';let title='',body='';if(p==
   }).join('');
  }
 
- if(p==='cache'){title='离线缓存';body=selected().mode==='demo'?`<p>保存此 30 秒本地样片，用于验证离线播放。包含镜像、倍速及字幕体验。</p><p role="status" id="bili-cache-status">${state.cacheBusy?'正在写入浏览器存储…':H(state.cacheError||'这不会下载任何 B 站视频。')}</p>${state.cacheBusy?'':button('download','保存样片供离线观看')}`:`<p>此 B 站视频可在线观看。</p><p>可前往 B 站 App 查看该视频是否允许缓存。</p><a data-bili-id="official-cache" href="${H(selected().url)}" target="_blank" rel="noopener">在 B 站继续 ↗</a>`;}
+ if(p==='cache'){title='离线缓存';body=selected().mode==='demo'?`<p>保存此 30 秒本地样片，用于验证离线播放。包含镜像、倍速及字幕体验。</p><p role="status" id="bili-cache-status">${state.cacheBusy?'正在写入浏览器存储…':H(state.cacheError||'这不会下载任何 B 站视频。')}</p>${state.cacheBusy?'':button('download','保存样片供离线观看')}`:`<p>离线缓存支持本地样片。</p>`;}
  if(p==='login'){
   title='连接 B 站账号';
   body=`<p id="bili-qr-note" role="status">${H(loginMessage)}</p>${qr?`<img class="bili-qr" alt="哔哩哔哩扫码登录" src="${H(qr)}">`:''}${loginBusy?'':button('login','重新生成二维码')}`;
  }
  return `<div class="bili-scrim"><section class="bili-sheet" role="dialog" aria-modal="true" aria-label="${H(title)}"><h2>${H(title)}</h2><div class="bili-sheet-items">${body}${button('close','关闭')}</div></section></div>`}
+function episodeShelf(video) {
+  const parts = video.parts || [];
+  if (parts.length < 2) return '';
+  return `<section class="bili-glass-shelf"><h3>选集 <span>${parts.length}</span></h3><div class="bili-track bili-episode-track">
+    ${parts.map(part=>`<button class="bili-part" type="button" data-bili-id="part:${part.page}" aria-pressed="${part.page===state.part}">
+      <small>P${part.page}</small><strong>${H(part.title)}</strong></button>`).join('')}</div></section>`;
+}
+function recommendationShelf() {
+  return videoShelf('接下来播放', relatedVideos(), 'related:', 'bili-related');
+}
 function player() {
   const video = selected();
   const demo = video.mode === 'demo';
   const native = demo || !!stream;
   const part = video.parts?.find(item => item.page === state.part);
   const heading = part && video.parts.length > 1 ? 'P'+state.part+' · '+part.title : video.title;
-  const next = video.parts?.find(item => item.page===state.part+1);
-  const nextCover = next?.cover || video.cover;
-  const controls = native ? `
+  const transportState = native ? '' : 'disabled';
+  const controls = `
     <div class="bili-transport" aria-label="播放控制">
-      ${iconButton('rewind','后退 5 秒','rewind','','5')}
-      ${iconButton('toggle','播放或暂停','play','data-focus-default')}
-      ${iconButton('forward','前进 5 秒','forward','','5')}
-      ${!demo?iconButton('danmaku-options','弹幕设置','chat',`aria-pressed="${state.danmaku}"`):''}
+      ${iconButton('rewind','后退 10 秒','rewind',transportState,'10')}
+      ${iconButton('toggle','播放或暂停','play',native?'data-focus-default':'disabled')}
+      ${iconButton('forward','前进 10 秒','forward',transportState,'10')}
+      ${!demo?iconButton('danmaku-switch','弹幕开关','chat',`aria-pressed="${state.danmaku}"`,'弹幕'):''}
       ${iconButton('settings','播放设置','settings')}
+      ${button('save-later',discovery.hasLater(video.id)?'取消稍后看':'稍后看',`class="bili-watch-later" aria-pressed="${discovery.hasLater(video.id)}"`)}
       ${iconButton('fullscreen',immersive?'退出全屏':'全屏播放',immersive?'minimize':'fullscreen')}
-    </div>
-    <div class="bili-watch-actions">
-      ${iconButton('parts','选集 · P'+state.part,'list','','选集')}
-      ${button('watch-more','更多 ···')}
-    </div>
-    ${next?`<button type="button" class="bili-up-next" data-bili-id="next-part"><span class="bili-next-cover">${nextCover?`<img src="${H(nextCover)}" alt="" referrerpolicy="no-referrer">`:''}${icon('next')}</span><span><small>接下来播放 · P${next.page}</small><strong>${H(next.title)}</strong></span></button>`:''}` : state.busy ? '' : `
-    <div class="bili-controls secondary">
-      ${button('embed-activate','进入官方播放器','data-focus-default')}${button('parts','选集 · P'+state.part)}
-    </div>
-    <a data-bili-id="official-player-link" href="${H(officialWatchUrl(video))}" target="_blank" rel="noopener">在 B 站继续观看 ↗</a>`;
-  return `<div class="bili-watch-heading">
-      <div><h1 title="${H(heading)}">${H(heading)}</h1><p>${H(part && video.parts.length>1 ? video.title : video.author)}</p></div>
-      ${iconButton('back','返回上一页','back')}
-    </div>
-    <div class="bili-video-stage">
+    </div>`;
+  return `<header class="bili-watch-heading">${iconButton('back','返回上一页','back')}
+      <span>正在播放</span><strong>${H(video.author)}</strong>
+    </header>
+    <div class="bili-video-stage" role="region" aria-label="GlassTube 播放器">
+      ${!native?`<div class="bili-play-poster">${coverArt(video.cover,video.id)}</div>`:''}
       <div class="bili-media-mount"></div>
       <div id="bili-danmaku-overlay" aria-hidden="true"></div>
       ${native?'<div id="bili-captions" class="bili-captions" hidden></div>':''}
-      ${native?'<progress id="bili-progress-bar" max="1" value="0" aria-label="播放进度"></progress>':''}
-      <p class="bili-play-status" id="bili-play-status" role="status">${state.busy?'正在加载…':''}</p>
+      <p class="bili-play-status" id="bili-play-status" role="status">${state.busy?'正在加载…':!native?'播放源暂不可用':''}</p>
     </div>
+    ${native?'<p class="bili-watch-meta"><progress id="bili-progress-bar" max="1" value="0" aria-label="播放进度"></progress><span id="bili-time"></span></p>':''}
+    <div class="bili-watch-info"><h1>${H(heading)}</h1><p>${H(video.author)}${video.topic?' · '+H(video.topic):''}</p></div>
     ${controls}
-    <p class="bili-watch-meta"><span id="bili-time"></span><span>${H(demo?(state.offline?'离线样片':'本地样片'):video.author)}</span><span id="bili-flags"></span><span id="bili-danmaku-status" role="status"></span></p>
-    ${!native && !state.busy && state.notice?`<p class="bili-note">${H(state.notice)}</p>`:''}
-    <p id="bili-media-error" class="bili-alert" role="status" hidden></p>`;
+    <p id="bili-danmaku-status" role="status"></p>
+    ${!native && !state.busy?`<div class="bili-play-recovery"><span role="status">${H(state.notice||'暂时无法加载播放源。')}</span>${button('retry-play','重试播放','data-focus-default')}</div>`:''}
+    <p id="bili-media-error" class="bili-alert" role="status" hidden></p>
+     ${episodeShelf(video)}
+    ${video.description?`<p class="bili-watch-description">${H(video.description)}</p>`:''}
+    ${recommendationShelf()}`;
 }
-
 function cacheView(){return `${header('离线缓存','仅显示已校验的本地样片')}<p class="bili-note">${H(state.cacheError||'本地缓存不等于 B 站 App 离线视频；B站内容缓存需单独能力。')}</p><div class="bili-list">${state.cache.length?state.cache.map(c=>`<section class="bili-cache-card"><h2>${H(c.title)}</h2><p>${(c.bytes/1024/1024).toFixed(1)} MB · ${c.exists?'已保存':'文件缺失'}</p><div class="bili-actions">${button('offline:'+c.id,'离线播放')}${button('remove:'+c.id,'删除本地缓存')}</div></section>`).join(''):'<p class="bili-note">还没有缓存。打开本地样片，在播放器中选择“缓存”。</p>'}</div>`}
 function connect(){
   const connected = account === 'connected';
@@ -492,9 +706,10 @@ function webImport() {
 }
 function render(){
   const section=currentSection();
-  const screen=({home,search,detail:details,player,cache:cacheView,connect,shelf:shelfView,topics:topicsView,import:importView,cloud:cloudView,webImport})[state.route]();
+  const screen=({home,featured,search,detail:details,player,cache:cacheView,connect,shelf:shelfView,topics:topicsView,import:importView,cloud:cloudView,webImport})[state.route]();
   const content=section?`${sectionBar(section)}<div class="bili-browse-scroll">${screen}</div>
-    <footer class="bili-browse-hints"><span><kbd>↑↓←→</kbd> 移焦</span><span><kbd>A</kbd> 确认</span><span><kbd>B</kbd> 返回</span></footer>`:screen;
+    <footer class="bili-browse-hints"><span><kbd>↑↓←→</kbd> 移焦</span><span><kbd>●</kbd> 选择</span><span class="bili-more-hint"><kbd>长按</kbd> 更多</span><span><kbd>Esc</kbd> 返回</span>
+    ${isFeed()?button('refresh-feed',feed.busy?'正在刷新…':'刷新热门',feed.busy?'aria-disabled="true"':''):''}</footer>`:screen;
   const mode=section?'bili-browsing':state.route==='player'?'bili-watching'+(immersive?' bili-immersive':''):'';
   return `<section class="bili-app ${mode}" data-route="${H(state.route)}"><div class="bili-body" ${state.panel?'inert':''}>${content}</div>${panel()}</section>`;
 }
@@ -518,10 +733,10 @@ function saveProgress(video,id,part) {
 window.addEventListener('pagehide',()=>{
   if(state.route==='player' && !state.busy && media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);
 });
-function release(){if(dashPlayer){const previous=dashPlayer;dashPlayer=null;previous.reset()}media?.pause?.();if(mediaURL)URL.revokeObjectURL(mediaURL);mediaURL='';media=null;mediaID=''}
+function release(){clearOverlay();if(dashPlayer){const previous=dashPlayer;dashPlayer=null;previous.reset()}media?.pause?.();if(mediaURL)URL.revokeObjectURL(mediaURL);mediaURL='';media=null;mediaID=''}
 function applySettings(){if(!media||media.tagName!=='VIDEO')return;media.playbackRate=state.rate;media.classList.toggle('bili-mirrored',state.mirror);for(const track of media.textTracks)track.mode='hidden';updateMedia()}
-function updateMedia(){if(!active()||state.route!=='player'||!media||media.tagName!=='VIDEO')return;const t=media.currentTime||0;const bar=document.querySelector('#bili-progress-bar');if(bar)bar.value=Number.isFinite(media.duration)&&media.duration>0?t/media.duration:0;const timer=document.querySelector('#bili-time');if(timer)timer.textContent=time(t)+' / '+time(media.duration||selected().duration||30);const play=document.querySelector('[data-bili-id="toggle"]');if(play&&play.dataset.paused!==String(media.paused)){play.dataset.paused=String(media.paused);play.innerHTML=icon(media.paused?'play':'pause');play.title=media.paused?'播放':'暂停'}showOverlay(t);const flags=document.querySelector('#bili-flags');if(flags)flags.textContent=state.rate+'×'+(state.mirror?' · 镜像':'')+(state.subtitle&&(!stream||stream.captionCues.length)?' · 字幕':'');const caps=document.querySelector('#bili-captions');if(caps){const cues=['本地交互样片 · 非 B 站视频','镜像仅反转画面，字幕保持可读','方向键移焦 · 确认执行 · 返回退出','倍速、字幕与离线可在本地验证'];const caption=stream?stream.captionCues.find(c=>c.from<=t&&c.to>t)?.text:cues[t<7?0:t<15?1:t<23?2:3];caps.textContent=state.subtitle?(caption||''):'';caps.hidden=!caps.textContent}if(Date.now()-lastSave>1500){lastSave=Date.now();saveProgress(media,selected().id,state.part)}}
-async function mountMedia(){const mount=document.querySelector('.bili-media-mount');if(!mount||state.busy)return;const v=selected(),id=v.id+':'+state.part+':'+state.offline+':'+(stream?.manifest||stream?.src||'');if(mediaID!==id){release();mediaID=id;if(v.mode==='demo'||stream){media=document.createElement('video');media.playsInline=true;media.preload='metadata';media.setAttribute('aria-label',stream?'B 站视频画面':'本地交互样片画面');media.tabIndex=-1;const expected=id;if(state.offline){try{const item=await transaction('readonly',s=>s.get(v.id));if(mediaID!==expected)return;if(!item?.blob?.size)throw Error('缓存文件不存在，请重新保存');mediaURL=URL.createObjectURL(item.blob);media.src=mediaURL}catch(e){const el=document.querySelector('#bili-media-error');if(el){el.hidden=false;el.textContent=e.message}return}}else if(!stream?.manifest)media.src=stream?.src||DEMO;media.volume=(osData?.settings?.volume??60)/100;const video=media, partAtMount=state.part;media.onended=()=>saveProgress(video,v.id,partAtMount);media.onloadedmetadata=()=>{const recent=discovery.resume(v.id,state.history);const old=recent?.parts?.[partAtMount] || ((!recent?.part||recent.part===partAtMount)?recent:null);const position=old&&!old.finished?old.position:0;video.currentTime=Number.isFinite(position)&&position<video.duration-1?position:0;applySettings();if(autoStart){autoStart=false;video.play().catch(()=>{});}};media.ontimeupdate=updateMedia;media.onplay=updateMedia;
+function updateMedia(){if(!active()||state.route!=='player'||state.busy||!media||media.tagName!=='VIDEO')return;const t=media.currentTime||0;const bar=document.querySelector('#bili-progress-bar');if(bar)bar.value=Number.isFinite(media.duration)&&media.duration>0?t/media.duration:0;const timer=document.querySelector('#bili-time');if(timer)timer.textContent=time(t)+' / '+time(media.duration||selected().duration||30);const play=document.querySelector('[data-bili-id="toggle"]');if(play&&play.dataset.paused!==String(media.paused)){play.dataset.paused=String(media.paused);play.innerHTML=icon(media.paused?'play':'pause');play.title=media.paused?'播放':'暂停'}updateOverlay();const caps=document.querySelector('#bili-captions');if(caps){const cues=['本地交互样片 · 非 B 站视频','镜像仅反转画面，字幕保持可读','方向键移焦 · 确认执行 · 返回退出','倍速、字幕与离线可在本地验证'];const caption=stream?stream.captionCues.find(c=>c.from<=t&&c.to>t)?.text:cues[t<7?0:t<15?1:t<23?2:3];caps.textContent=state.subtitle?(caption||''):'';caps.hidden=!caps.textContent}if(Date.now()-lastSave>1500){lastSave=Date.now();saveProgress(media,selected().id,state.part)}}
+async function mountMedia(){const mount=document.querySelector('.bili-media-mount');if(!mount||state.busy)return;const v=selected();if(v.mode!=='demo'&&!stream)return;const id=v.id+':'+state.part+':'+state.offline+':'+(stream?.manifest||stream?.src||'');if(mediaID!==id){release();mediaID=id;media=document.createElement('video');media.playsInline=true;media.preload='metadata';media.setAttribute('aria-label',stream?'B 站视频画面':'本地交互样片画面');media.tabIndex=-1;const expected=id;if(state.offline){try{const item=await transaction('readonly',s=>s.get(v.id));if(mediaID!==expected)return;if(!item?.blob?.size)throw Error('缓存文件不存在，请重新保存');mediaURL=URL.createObjectURL(item.blob);media.src=mediaURL}catch(e){const el=document.querySelector('#bili-media-error');if(el){el.hidden=false;el.textContent=e.message}return}}else if(!stream?.manifest)media.src=stream?.src||DEMO;media.volume=(osData?.settings?.volume??60)/100;const video=media, partAtMount=state.part;media.onended=()=>saveProgress(video,v.id,partAtMount);media.onloadedmetadata=()=>{const recent=discovery.resume(v.id,state.history);const old=recent?.parts?.[partAtMount] || ((!recent?.part||recent.part===partAtMount)?recent:null);const position=old&&!old.finished?old.position:0;video.currentTime=Number.isFinite(position)&&position<video.duration-1?position:0;applySettings();if(autoStart){autoStart=false;video.play().catch(()=>{});}};media.ontimeupdate=updateMedia;media.onplay=updateMedia;
  const playbackStatus = text => {
    const el = document.querySelector('#bili-play-status');
    if (el && media===video) el.textContent=text;
@@ -533,13 +748,13 @@ async function mountMedia(){const mount=document.querySelector('.bili-media-moun
    bufferTimer=setTimeout(()=>{if(!video.paused)playbackStatus('正在缓冲');},400);
  };
  media.onplaying=clearBuffer;
- media.onseeked=()=>{if(video.readyState>=3)clearBuffer();};media.onpause=()=>{clearBuffer();updateMedia();saveProgress(video,v.id,partAtMount)};media.onerror=()=>{
+ media.onseeked=()=>{if(video.readyState>=3)clearBuffer();clearOverlay();updateMedia();};media.onpause=()=>{clearBuffer();updateMedia();saveProgress(video,v.id,partAtMount)};media.onerror=()=>{
   if(media!==video||!active()||state.route!=='player')return;
   if(stream?.manifest){if(!state.busy)void watchVideo(true, !media?.paused || autoStart);return}
-  if(stream){stream=null;state.notice='设备播放器无法读取此媒体，请用 B 站播放器观看。';draw('embed-activate');return}
+  if(stream){release();stream=null;state.notice='暂时无法读取此视频，请重试播放。';draw('retry-play');return}
   const el=document.querySelector('#bili-media-error');
   if(el){el.hidden=false;el.textContent='样片无法播放，请重试或检查本地缓存。'}
- };}else{media=document.createElement('iframe');media.src='https://player.bilibili.com/player.html?bvid='+encodeURIComponent(v.id)+'&page='+state.part+'&autoplay=0&danmaku=0';media.title='Bilibili 官方播放器';media.allow='fullscreen; encrypted-media; picture-in-picture';media.allowFullscreen=true;media.referrerPolicy='strict-origin-when-cross-origin';media.tabIndex=-1;}}
+ };}
  if(!active()||state.route!=='player')return;document.querySelector('.bili-media-mount')?.replaceChildren(media);
  if(stream?.manifest && !dashPlayer){
    const dash = window.dashjs.MediaPlayer().create();
@@ -588,8 +803,17 @@ const baseRender=renderOS;renderOS=function(){if(media?.isConnected)media.remove
    document.querySelector('#bili-web-import-note').textContent='导入失败，请检查记录格式或浏览器存储。';
   }
  };
- if(state.route==='player')mountMedia();}};
-function doSearch(q){state.query=String(q||'').trim().slice(0,80);if(!state.query){state.notice='请输入搜索词';draw('query');return}state.route='search';if(state.mode==='live')loadLive(true);else{state.items=discovery.search(state.query);state.error='';state.notice='来自本机片库';draw()}}
+ if(state.route==='player'){
+  mountMedia();
+  const part = document.querySelector('.bili-episode-track [aria-pressed="true"]');
+  if(part) {
+   const track = part.parentElement;
+   const item = part.getBoundingClientRect(), viewport = track.getBoundingClientRect();
+   if(item.right>viewport.right-12)track.scrollLeft+=item.right-viewport.right+12;
+  }
+ }}};
+
+function doSearch(q){state.query=String(q||'').trim().slice(0,80);if(!state.query){state.notice='请输入搜索词';draw('query');return}state.route='search';if(state.mode==='live')loadSearch();else{state.items=discovery.search(state.query);state.error='';state.notice='来自本机片库';draw()}}
 const click=osClick;osClick=async function(e){const b=e.target.closest('[data-bili-id]');if(!b||!active())return click(e);const id=b.dataset.biliId;if(b.matches('input,select,textarea,a')||id==='submit')return;
  if(id==='back')return back();if(id==='search'){if(state.route==='search'){focus('query');return}go('search',false);Object.assign(state,searchSession);draw('query');return}if(id==='connect'){
   if(state.route==='connect')return;
@@ -599,13 +823,27 @@ const click=osClick;osClick=async function(e){const b=e.target.closest('[data-bi
   if(active()&&gen===generation) draw();
   return;
  }
- if(id==='featured'){if(currentSection()!=='featured')shelf('推荐',discovery.featured());return;}
- if(id==='recent'||id==='my-recent'){if(state.route!=='home'){homeOrder=null;go('home')}return;}
+ if(id==='featured'){if(state.route!=='featured')go('featured');return;}
+ if(id==='refresh-feed')return refreshFeed();
+ if(id.startsWith('hot:')||id.startsWith('category:')){const item=cardVideo(id);if(item)return detail(item.id,true,item);return;}
+ if(id.startsWith('related:'))return openRecommendation(id.slice(8));
+ if(id==='recent'||id==='my-recent'){if(state.route!=='home'){go('home');return refreshFeed();}return;}
  if(id==='later')return shelf('稍后看',discovery.later().map(catalog));
- if(id==='topics')return go('topics');
- if(id.startsWith('topic:'))return shelf(id.slice(6),discovery.byTopic(id.slice(6)));
+ if(id==='topics'){if(state.route!=='topics')go('topics');return;}
+ if(id.startsWith('topic:'))return shelf(id.slice(6),feed.categories.get(id.slice(6))?.items||[]);
  if(id==='import')return go('import');
  if(id==='sample-shelf')return shelf('交互样片',samples);
+ if(id==='menu-watch'){
+  const video = menuVideo;
+  state.panel = '';
+  return detail(video.id,true,video,state.route==='player');
+ }
+ if(id==='menu-later'){
+  try { discovery.toggleLater(menuVideo); }
+  catch { state.notice='本机存储不可用，无法保存稍后看。'; }
+  draw('menu-later');
+  return;
+ }
  if(id==='save-later'){
   try { discovery.toggleLater(selected()); }
   catch { state.notice='本机存储不可用，无法保存稍后看。'; }
@@ -624,19 +862,23 @@ const click=osClick;osClick=async function(e){const b=e.target.closest('[data-bi
  if(id==='web-favorites')return shelf('B 站网页收藏',discovery.webFavorites(),'来自最近一次网页导入');
  if(id==='cloud-history')return cloudShelf('history');
  if(id==='cloud-folders')return cloudShelf('folders');
- if(id.startsWith('folder:'))return cloudShelf('favorites',id.slice(7));if(id==='cache-list'){await refreshCache();go('cache');return}if(id==='demo'){generation++;state.busy=false;state.mode='demo';state.items=[];state.error='';state.notice='';if(state.route==='search'&&state.query)doSearch(state.query);else draw();return}if(id==='live'){go('shelf');viewTitle='B 站热门';return loadLive()}if(id==='live-search'){state.mode='live';if(state.query)return loadLive(true);state.items=[];state.notice='';draw('query');return}if(id==='retry')return loadLive(state.route==='search');if(id.startsWith('term:'))return doSearch(id.slice(5));if(id.startsWith('video:'))return detail(id.slice(6),true);
+ if(id.startsWith('folder:'))return cloudShelf('favorites',id.slice(7));if(id==='cache-list'){await refreshCache();go('cache');return}if(id==='demo'){generation++;state.busy=false;state.mode='demo';state.items=[];state.error='';state.notice='';if(state.route==='search'&&state.query)doSearch(state.query);else draw();return}if(id==='live-search'){state.mode='live';if(state.query)return loadSearch();state.items=[];state.notice='';draw('query');return}if(id==='retry')return loadSearch();if(id.startsWith('term:'))return doSearch(id.slice(5));if(id.startsWith('video:'))return detail(id.slice(6),true);
  if(id==='danmaku-options')return showPanel('danmaku-options');
  if(id==='danmaku-switch'||id==='danmaku-curated'){
   if(id==='danmaku-switch')state.danmaku=!state.danmaku;
   else if(state.danmaku)state.curated=!state.curated;
   persist();
-  draw(id);
+  clearOverlay();
+  if (!state.panel) {
+    const control = document.querySelector('[data-bili-id="danmaku-switch"]');
+    control?.setAttribute('aria-pressed', String(state.danmaku));
+    const key = selected().id + ':' + state.part;
+    if (state.danmaku && commentTracks.get(key)?.error) commentTracks.delete(key);
+    updateOverlay();
+  } else draw(id);
   return;
  }
- if(id==='watch-more')return showPanel('watch-more');
- if(id==='watch-info')return detail(selected().id);
  if(id==='danmaku')return openDanmaku();
- if(id==='next-part')return changePart(state.part+1);
 
  if(id==='watch')return watchVideo();if(id==='parts')return showPanel('parts','part:'+state.part);if(id.startsWith('part:'))return changePart(+id.slice(5));
  if(id==='settings')return showPanel('settings');if(id==='cache-one')return showPanel('cache');if(id==='speed')return showPanel('speed');if(id==='close')return back();if(id==='download')return download();
@@ -644,12 +886,12 @@ const click=osClick;osClick=async function(e){const b=e.target.closest('[data-bi
  if(id==='toggle'&&media?.tagName==='VIDEO'){try{if(media.paused)await media.play();else media.pause();updateMedia()}catch{state.notice='播放被浏览器阻止，请再次确认播放。';const el=document.querySelector('#bili-media-error');if(el){el.hidden=false;el.textContent=state.notice}}return}if(id==='rewind'||id==='forward'){skip(id);return}
  if(id==='fullscreen'){setImmersive(!immersive);return}
 
- if(id==='embed-activate'){media?.focus();return}if(id==='official-help'){state.notice='设备按键暂不能调整官方播放器的镜像、倍速和字幕。可在 B 站继续观看，或用本地样片体验适配操作。';const el=document.querySelector('#bili-media-error');if(el){el.hidden=false;el.textContent=state.notice}return}
+ if(id==='retry-play')return watchVideo(false,true);
  if(id.startsWith('offline:')){const item=samples.find(v=>v.id===id.slice(8));if(!item)return;state.selected=item;state.offline=true;state.part=1;go('player');return}if(id.startsWith('remove:')){await transaction('readwrite',s=>s.delete(id.slice(7)));await refreshCache();draw();return}
 };
 function changePart(part) {
   state.panel='';
-  if(part===state.part){draw('parts');return;}
+  if(part===state.part){if(state.route!=='player')draw('parts');return;}
   const playing = media?.tagName==='VIDEO' && !media.paused;
   if(media?.tagName==='VIDEO')saveProgress(media,selected().id,state.part);
   media?.pause?.();
@@ -671,7 +913,7 @@ function setImmersive(enabled) {
 }
 function skip(id) {
   if(!active() || state.route!=='player' || state.panel || media?.tagName!=='VIDEO' || !Number.isFinite(media.duration))return;
-  const step=id==='rewind'?-5:5;
+  const step=id==='rewind'?-10:10;
   media.currentTime=Math.max(0,Math.min(media.duration,media.currentTime+step));
   updateMedia();
 }
@@ -722,7 +964,52 @@ window.addEventListener('click',event=>{
   }
 },true);
 
-window.BilibiliService={scope,back,open(){state.panel='';osNavigate('bilibili');requestAnimationFrame(()=>{if(active())window.LegoGamepad?.refreshFocus(true)})},snapshot(){return {route:state.route,mode:state.mode,panel:state.panel,mirror:state.mirror,rate:state.rate,subtitle:state.subtitle,offline:state.offline}}};
+const cardTarget = target => target.closest?.('.bili-video-card,.bili-hero');
+let cardHold;
+function stopCardHold() {
+  if (!cardHold) return;
+  clearTimeout(cardHold.timer);
+  cardHold.target.classList.remove('bili-card-holding');
+  cardHold = null;
+}
+function startCardHold(event, target) {
+  stopCardHold();
+  target.classList.add('bili-card-holding');
+  const hold = {target,x:event.clientX,y:event.clientY};
+  hold.timer = setTimeout(()=>{
+    stopCardHold();
+    if (target.isConnected && !state.panel) openCardMenu(target);
+  },550);
+  cardHold = hold;
+}
+document.addEventListener('pointerdown', event => {
+  const target = cardTarget(event.target);
+  if (target && event.button === 0) startCardHold(event,target);
+});
+document.addEventListener('pointermove', event => {
+  if (cardHold && Math.hypot(event.clientX-cardHold.x,event.clientY-cardHold.y)>12) stopCardHold();
+});
+for (const type of ['pointerup','pointercancel','blur']) window.addEventListener(type,stopCardHold,true);
+document.addEventListener('contextmenu', event => {
+  const target = cardTarget(event.target);
+  if (target && !state.panel && openCardMenu(target)) event.preventDefault();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && event.repeat && state.panel === 'card-menu') { event.preventDefault(); return; }
+  const target = cardTarget(event.target);
+  if (!target || state.panel) return;
+  if (event.key.toLowerCase() === 'm' && openCardMenu(target)) event.preventDefault();
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  if (!event.repeat) startCardHold(event,target);
+});
+document.addEventListener('keyup', event => {
+  if (event.key !== 'Enter' || !cardHold || cardHold.x !== undefined) return;
+  const target = cardHold.target;
+  stopCardHold();
+  if (target.isConnected && !state.panel) target.click();
+});
+window.BilibiliService={scope,back,open(){state.panel='';osNavigate('bilibili');if(isFeed())void refreshFeed();requestAnimationFrame(()=>{if(active())window.LegoGamepad?.refreshFocus(true)})},snapshot(){return {route:state.route,mode:state.mode,panel:state.panel,mirror:state.mirror,rate:state.rate,subtitle:state.subtitle,offline:state.offline}}};
 window.LegoHandoffs?.entries.push({id:'bilibili',name:'Bilibili',glyph:'play'});
 const nav=osNavigate;osNavigate=function(page){if(active()&&page!=='bilibili'){stopPoll();remember();media?.pause?.()}return nav(page)};
 document.addEventListener('DOMContentLoaded',()=>{if(!osData)bootOS()},{once:true});

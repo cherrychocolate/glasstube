@@ -16,12 +16,23 @@ let renderOS = () => {
 
 const focusables = () => [...document.querySelectorAll('.bili-app [data-bili-id]')]
   .filter(element => !element.disabled && !element.closest('[inert],[hidden]') && element.getClientRects().length);
+function topScrollArea(element) {
+  const header = element.closest('.bili-watch-heading, .bili-head');
+  return header?.closest('.bili-browse-scroll, .bili-body');
+}
+document.addEventListener('focusin', event => {
+  const area = topScrollArea(event.target);
+  if (area) area.scrollTop = 0;
+});
+
 function focusElement(element) {
   if (!element) return false;
   document.querySelector('.device-focus')?.classList.remove('device-focus');
   element.classList.add('device-focus');
   element.focus({preventScroll:true});
-  element.scrollIntoView({block:'nearest',inline:'nearest'});
+  const top = topScrollArea(element);
+  if (top) top.scrollTop = 0;
+  else element.scrollIntoView({block:'nearest',inline:'nearest'});
   return true;
 }
 window.LegoGamepad = {

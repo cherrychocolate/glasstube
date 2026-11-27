@@ -1,0 +1,8 @@
+{
+  "framework": "flask",
+  "functions": {
+    "app.py": {
+      "includeFiles": "workbench/**"
+    }
+  }
+}
